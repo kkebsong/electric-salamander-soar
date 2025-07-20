@@ -8,8 +8,8 @@ import { showSuccess, showError, showLoading, dismissToast } from "@/utils/toast
 import { supabase } from "@/integrations/supabase/client";
 import { X, UploadCloud, Loader2, CheckCircle, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import JSZip from "jszip"; // Import JSZip
-import { saveAs } from "file-saver"; // Import saveAs
+import JSZip from "jszip";
+import { saveAs } from "file-saver";
 
 interface UploadFile {
   id: string;
@@ -25,7 +25,7 @@ const ImageUploader = () => {
   const [processedImageUrls, setProcessedImageUrls] = useState<string[]>([]);
   const [isUploadingGlobal, setIsUploadingGlobal] = useState(false);
   const [cropAmount, setCropAmount] = useState<number>(45);
-  const [folderName, setFolderName] = useState<string>("processed_images"); // New state for folder name
+  const [folderName, setFolderName] = useState<string>("processed_images");
   const [isDragging, setIsDragging] = useState(false);
 
   useEffect(() => {
@@ -210,7 +210,7 @@ const ImageUploader = () => {
 
     const downloadToastId = showLoading(`Preparing ${processedImageUrls.length} images for download...`);
     const zip = new JSZip();
-    const folder = zip.folder(folderName || "processed_images"); // Use folderName or default
+    const folder = zip.folder(folderName || "processed_images");
 
     if (!folder) {
       dismissToast(downloadToastId);
@@ -254,7 +254,7 @@ const ImageUploader = () => {
     setProcessedImageUrls([]);
     setIsUploadingGlobal(false);
     setCropAmount(45);
-    setFolderName("processed_images"); // Reset folder name
+    setFolderName("processed_images");
     showSuccess("All selections and processed images have been cleared.");
   };
 
@@ -381,7 +381,7 @@ const ImageUploader = () => {
               {processedImageUrls.map((url, index) => (
                 <div key={index} className="border rounded-md p-2 flex flex-col items-center">
                   <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline text-xs break-all mb-1">
-                    {url.split('/').pop()}
+                    {`Изображение ${index + 1}`}
                   </a>
                   <img src={url} alt={`Processed ${index}`} className="max-w-full h-auto rounded-md shadow-md" />
                 </div>
