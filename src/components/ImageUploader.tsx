@@ -122,13 +122,10 @@ const ImageUploader = () => {
     }
 
     setIsUploadingGlobal(true);
-    const successfulProcessedUrls: string[] = [];
     const totalFiles = uploadFiles.length;
-    let processedCount = 0;
+    const globalToastId = showLoading(`Processing images...`);
 
-    const globalToastId = showLoading(`Processing 0/${totalFiles} images...`);
-
-    for (const uploadFile of uploadFiles) {
+    const processingPromises = uploadFiles.map(async (uploadFile) => {
       const fileName = `${Date.now()}-${uploadFile.file.name}`;
       const rawFilePath = fileName;
 
@@ -167,14 +164,19 @@ const ImageUploader = () => {
         const data = await response.json();
 
         if (data && data.processedImageUrl) {
-          successfulProcessedUrls.push(data.processedImageUrl);
-          processedCount++;
-          showLoading(`Processing ${processedCount}/${totalFiles} images...`);
           setUploadFiles(prev => prev.map(f => f.id === uploadFile.id ? { ...f, status: 'success', processedUrl: data.processedImageUrl } : f));
+          return { success: true, url: data.processedImageUrl };
         } else {
           throw new Error(`No processed image URL returned.`);
         }
 
+      } catch (error: any) {
+        console.error(`Error processing ${uploadFile.file.name}:`, error);
+        setUploadFiles(prev => prev.map(f => f.id === uploadFile.id ? { ...f, status: 'error', errorMessage: error.message } : f));
+        showError(`Failed to process ${uploadFile.file.name}: ${error.message}`);
+        return { success: false, error: error.message };
+      } finally {
+        // Always attempt to delete the raw image, regardless of processing success/failure
         const { error: deleteError } = await supabase.storage
           .from('raw-images')
           .remove([rawFilePath]);
@@ -182,19 +184,19 @@ const ImageUploader = () => {
         if (deleteError) {
           console.error(`Error deleting raw image ${uploadFile.file.name}:`, deleteError.message);
         }
-
-      } catch (error: any) {
-        console.error(`Error processing ${uploadFile.file.name}:`, error);
-        setUploadFiles(prev => prev.map(f => f.id === uploadFile.id ? { ...f, status: 'error', errorMessage: error.message } : f));
-        showError(`Failed to process ${uploadFile.file.name}: ${error.message}`);
       }
-    }
+    });
+
+    const results = await Promise.all(processingPromises);
+
+    const successfulProcessedUrls = results
+      .filter(result => result.success)
+      .map(result => result.url);
 
     setProcessedImageUrls(successfulProcessedUrls);
     dismissToast(globalToastId);
     setIsUploadingGlobal(false);
     
-    setUploadFiles([]);
     if (successfulProcessedUrls.length > 0) {
       showSuccess(`Successfully processed ${successfulProcessedUrls.length} out of ${totalFiles} images!`);
     } else {
@@ -210,14 +212,7 @@ const ImageUploader = () => {
 
     const downloadToastId = showLoading(`Preparing ${processedImageUrls.length} images for download...`);
     const zip = new JSZip();
-    const folder = zip.folder(folderName || "processed_images");
-
-    if (!folder) {
-      dismissToast(downloadToastId);
-      showError("Failed to create zip folder.");
-      return;
-    }
-
+    
     let downloadCount = 0;
     for (const url of processedImageUrls) {
       try {
@@ -227,7 +222,7 @@ const ImageUploader = () => {
         }
         const blob = await response.blob();
         const filename = url.split('/').pop() || `processed_image_${Date.now()}.jpeg`;
-        folder.file(filename, blob);
+        zip.file(filename, blob); // Add directly to zip
         downloadCount++;
         showLoading(`Adding ${downloadCount}/${processedImageUrls.length} images to zip...`);
       } catch (error) {
