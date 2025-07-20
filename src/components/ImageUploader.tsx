@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { showSuccess, showError, showLoading, dismissToast } from "@/utils/toast";
 import { supabase } from "@/integrations/supabase/client";
-import { X, UploadCloud, Loader2, CheckCircle, XCircle } from "lucide-react";
+import { X, UploadCloud, Loader2, CheckCircle, XCircle, ArrowUp, ArrowDown } from "lucide-react"; // Добавлены ArrowUp, ArrowDown
 import { cn } from "@/lib/utils";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
@@ -109,6 +109,25 @@ const ImageUploader = () => {
       setUploadFiles(prevFiles => prevFiles.filter(f => f.id !== idToRemove));
       showSuccess(`Removed file: ${fileToRemove.file.name}`);
     }
+  };
+
+  const handleMoveFile = (idToMove: string, direction: 'up' | 'down') => {
+    setUploadFiles(prevFiles => {
+      const index = prevFiles.findIndex(f => f.id === idToMove);
+      if (index === -1) return prevFiles;
+
+      const newFiles = [...prevFiles];
+      const [movedFile] = newFiles.splice(index, 1);
+
+      if (direction === 'up' && index > 0) {
+        newFiles.splice(index - 1, 0, movedFile);
+      } else if (direction === 'down' && index < prevFiles.length - 1) {
+        newFiles.splice(index + 1, 0, movedFile);
+      } else {
+        return prevFiles; // No change if at boundary
+      }
+      return newFiles;
+    });
   };
 
   const handleUpload = async () => {
@@ -318,7 +337,7 @@ const ImageUploader = () => {
           <div className="text-sm text-muted-foreground">
             <p>Selected files ({uploadFiles.length}):</p>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2 max-h-40 overflow-y-auto">
-              {uploadFiles.map((uploadFile) => (
+              {uploadFiles.map((uploadFile, index) => (
                 <div key={uploadFile.id} className="relative group">
                   <img src={uploadFile.previewUrl} alt={`Preview ${uploadFile.file.name}`} className="w-full h-20 object-cover rounded-md shadow-sm" />
                   <span className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 text-white text-xs p-1 truncate rounded-b-md">
@@ -333,6 +352,27 @@ const ImageUploader = () => {
                   >
                     <X className="h-4 w-4" />
                   </Button>
+                  {/* Add sorting buttons */}
+                  <div className="absolute top-1 left-1 flex flex-col space-y-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Button
+                      variant="secondary"
+                      size="icon"
+                      className="h-6 w-6 rounded-full"
+                      onClick={() => handleMoveFile(uploadFile.id, 'up')}
+                      disabled={isUploadingGlobal || index === 0}
+                    >
+                      <ArrowUp className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="icon"
+                      className="h-6 w-6 rounded-full"
+                      onClick={() => handleMoveFile(uploadFile.id, 'down')}
+                      disabled={isUploadingGlobal || index === uploadFiles.length - 1}
+                    >
+                      <ArrowDown className="h-4 w-4" />
+                    </Button>
+                  </div>
                   {uploadFile.status !== 'pending' && (
                     <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-60 rounded-md">
                       {uploadFile.status === 'uploading' || uploadFile.status === 'processing' ? (
