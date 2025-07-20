@@ -1,17 +1,13 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import ReactCrop, {
-  centerCrop,
-  makeCrop,
-  PixelCrop,
-  Crop as ReactCropType,
-} from "react-image-crop";
+import ReactCrop, { PixelCrop, Crop as ReactCropType } from "react-image-crop";
+import * as ReactCropUtils from "react-image-crop"; // Import all as a namespace
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { showSuccess, showError, showLoading, dismissToast } from "@/utils/toast";
 import { supabase } from "@/integrations/supabase/client";
-import "react-image-crop/dist/ReactCrop.css"; // Corrected import path
+import "react-image-crop/dist/ReactCrop.css";
 
 interface InteractiveImageCropperProps {
   isOpen: boolean;
@@ -28,8 +24,8 @@ function centerAspectCrop(
   mediaHeight: number,
   aspect: number,
 ) {
-  return centerCrop(
-    makeCrop({
+  return ReactCropUtils.centerCrop(
+    ReactCropUtils.makeCrop({
       unit: '%',
       width: 90,
     }),
