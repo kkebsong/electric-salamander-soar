@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
+import { Image } from "https://deno.land/x/imagescript@1.2.15/mod.ts"; // Импортируем imagescript
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -46,37 +47,79 @@ serve(async (req) => {
       });
     }
 
-    // Инициализация клиента Supabase с сервисным ключом для доступа к бакетам
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
-    // Имитация обработки изображения:
-    // Создаем новое имя файла для "обработанного" изображения (например, меняем расширение на .jpeg)
-    const processedFileName = filePath.replace(/\.png$/i, '_processed.jpeg');
+    // 1. Загружаем исходное изображение из бакета 'raw-images'
+    const { data: imageData, error: downloadError } = await supabase.storage
+      .from('raw-images')
+      .download(filePath);
 
-    // Создаем фиктивное содержимое для имитации обработанного изображения
-    const dummyProcessedContent = new TextEncoder().encode(`Simulated processed content for ${filePath}`);
-
-    // Загружаем фиктивное обработанное изображение в бакет 'processed-images'
-    const { error: uploadProcessedError } = await supabase.storage
-      .from('processed-images')
-      .upload(processedFileName, dummyProcessedContent, {
-        contentType: 'image/jpeg', // Имитируем вывод JPEG
-        cacheControl: '3600',
-        upsert: true, // Разрешаем перезапись для тестирования
-      });
-
-    if (uploadProcessedError) {
-      console.error('Edge Function: Error uploading simulated processed image:', uploadProcessedError);
-      return new Response(JSON.stringify({ error: `Failed to upload simulated processed image: ${uploadProcessedError.message}` }), {
+    if (downloadError) {
+      console.error('Edge Function: Error downloading raw image:', downloadError);
+      return new Response(JSON.stringify({ error: `Failed to download raw image: ${downloadError.message}` }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 500,
       });
     }
 
-    // Получаем публичный URL для только что загруженного "обработанного" изображения
+    if (!imageData) {
+      return new Response(JSON.stringify({ error: 'Downloaded image data is empty.' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 500,
+      });
+    }
+
+    // Конвертируем ArrayBuffer в Uint8Array для imagescript
+    const imageBuffer = new Uint8Array(await imageData.arrayBuffer());
+
+    // 2. Обрабатываем изображение с помощью imagescript
+    let image;
+    try {
+      image = await Image.decode(imageBuffer);
+    } catch (decodeError: any) {
+      console.error('Edge Function: Error decoding image:', decodeError);
+      return new Response(JSON.stringify({ error: `Failed to decode image: ${decodeError.message}` }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 500,
+      });
+    }
+
+    // Обрезаем 45px снизу
+    const cropAmount = 45;
+    const newHeight = image.height - cropAmount;
+    if (newHeight <= 0) {
+      return new Response(JSON.stringify({ error: `Image is too short (${image.height}px) to crop ${cropAmount}px from the bottom.` }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 400,
+      });
+    }
+    image.crop(0, 0, image.width, newHeight);
+
+    // Конвертируем в JPEG (0 для JPEG)
+    const processedImageBuffer = await image.encode(0); 
+
+    // 3. Загружаем обработанное изображение в бакет 'processed-images'
+    const processedFileName = filePath.replace(/\.png$/i, '_cropped.jpeg'); // Меняем расширение и добавляем _cropped
+    const { error: uploadProcessedError } = await supabase.storage
+      .from('processed-images')
+      .upload(processedFileName, processedImageBuffer, {
+        contentType: 'image/jpeg',
+        cacheControl: '3600',
+        upsert: true,
+      });
+
+    if (uploadProcessedError) {
+      console.error('Edge Function: Error uploading processed image:', uploadProcessedError);
+      return new Response(JSON.stringify({ error: `Failed to upload processed image: ${uploadProcessedError.message}` }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 500,
+      });
+    }
+
+    // 4. Получаем публичный URL для обработанного изображения
     const { data: publicUrlData } = supabase.storage
       .from('processed-images')
       .getPublicUrl(processedFileName);
