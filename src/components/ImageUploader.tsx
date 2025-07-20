@@ -5,53 +5,104 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { showSuccess, showError, showLoading, dismissToast } from "@/utils/toast";
+import { supabase } from "@/integrations/supabase/client";
+import { Progress } from "@/components/ui/progress";
 
-const ImageUploader = () => {
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+interface ProcessedImage {
+  originalName: string;
+  processedUrl: string;
+  processedPath: string;
+}
+
+const ImageUploader = ({ onImagesProcessed }: { onImagesProcessed: (images: ProcessedImage[]) => void }) => {
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [uploadProgress, setUploadProgress] = useState<Map<string, number>>(new Map());
+  const [processingStatus, setProcessingStatus] = useState<Map<string, string>>(new Map());
+  const [isUploading, setIsUploading] = useState(false);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files && event.target.files[0]) {
-      setSelectedFile(event.target.files[0]);
+    if (event.target.files) {
+      setSelectedFiles(Array.from(event.target.files));
+      setUploadProgress(new Map());
+      setProcessingStatus(new Map());
     } else {
-      setSelectedFile(null);
+      setSelectedFiles([]);
     }
   };
 
   const handleUpload = async () => {
-    if (!selectedFile) {
-      showError("Please select a file first.");
+    if (selectedFiles.length === 0) {
+      showError("Please select files first.");
       return;
     }
 
-    const toastId = showLoading("Uploading and processing image...");
+    setIsUploading(true);
+    const overallToastId = showLoading("Starting image upload and processing...");
+    const processedImages: ProcessedImage[] = [];
 
-    // Simulate API call to a backend for image processing and upload
-    // In a real application, you would send `selectedFile` to your server here.
-    // Example:
-    // const formData = new FormData();
-    // formData.append('image', selectedFile);
-    // try {
-    //   const response = await fetch('/api/upload-and-process', {
-    //     method: 'POST',
-    //     body: formData,
-    //   });
-    //   if (!response.ok) throw new Error('Upload failed');
-    //   const result = await response.json();
-    //   console.log('Upload successful:', result);
-    //   showSuccess('Image processed and uploaded successfully!');
-    // } catch (error) {
-    //   console.error('Upload error:', error);
-    //   showError('Failed to process and upload image.');
-    // } finally {
-    //   dismissToast(toastId);
-    // }
+    for (const file of selectedFiles) {
+      const fileId = file.name + Date.now(); // Unique ID for tracking
+      setProcessingStatus(prev => new Map(prev).set(fileId, "Uploading..."));
+      setUploadProgress(prev => new Map(prev).set(fileId, 0));
 
-    // Simulating a delay for the "upload"
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+      try {
+        // 1. Upload original PNG to Supabase Storage
+        const originalFilePath = `original/${file.name}`;
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from('images')
+          .upload(originalFilePath, file, {
+            cacheControl: '3600',
+            upsert: true,
+            onUploadProgress: (event) => {
+              const progress = (event.loaded / event.total) * 100;
+              setUploadProgress(prev => new Map(prev).set(fileId, progress));
+            },
+          });
 
-    dismissToast(toastId);
-    showSuccess(`Successfully "uploaded" and "processed" ${selectedFile.name}!`);
-    setSelectedFile(null); // Clear selected file after "upload"
+        if (uploadError) {
+          throw uploadError;
+        }
+
+        setProcessingStatus(prev => new Map(prev).set(fileId, "Processing..."));
+
+        // 2. Invoke Edge Function for processing
+        const { data: processResult, error: processError } = await supabase.functions.invoke('process-image', {
+          body: { filePath: originalFilePath, fileName: file.name },
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+        if (processError) {
+          throw processError;
+        }
+
+        if (processResult && processResult.publicUrl) {
+          processedImages.push({
+            originalName: file.name,
+            processedUrl: processResult.publicUrl,
+            processedPath: processResult.processedFilePath,
+          });
+          setProcessingStatus(prev => new Map(prev).set(fileId, "Completed"));
+        } else {
+          throw new Error("Processing failed: No public URL returned.");
+        }
+
+      } catch (error: any) {
+        console.error(`Error processing ${file.name}:`, error);
+        setProcessingStatus(prev => new Map(prev).set(fileId, `Failed: ${error.message}`));
+        showError(`Failed to process ${file.name}: ${error.message}`);
+      }
+    }
+
+    dismissToast(overallToastId);
+    setIsUploading(false);
+    setSelectedFiles([]); // Clear selected files after processing attempt
+
+    if (processedImages.length > 0) {
+      showSuccess(`Successfully processed ${processedImages.length} image(s)!`);
+      onImagesProcessed(processedImages);
+    } else {
+      showError("No images were successfully processed.");
+    }
   };
 
   return (
@@ -59,26 +110,41 @@ const ImageUploader = () => {
       <CardHeader>
         <CardTitle>Image Cropper & Uploader</CardTitle>
         <CardDescription>
-          Select a PNG image to crop 45px from the bottom and convert to JPEG.
-          (Processing happens on a simulated backend)
+          Select PNG images to crop 45px from the bottom and convert to JPEG.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid w-full max-w-sm items-center gap-1.5">
           <label htmlFor="picture" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-            Picture
+            Pictures (PNG only)
           </label>
-          <Input id="picture" type="file" accept="image/png" onChange={handleFileChange} />
+          <Input id="picture" type="file" accept="image/png" onChange={handleFileChange} multiple />
         </div>
-        {selectedFile && (
-          <p className="text-sm text-muted-foreground">Selected file: {selectedFile.name}</p>
+        {selectedFiles.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground">Selected files:</p>
+            <ul className="list-disc list-inside text-sm text-gray-700 dark:text-gray-300">
+              {selectedFiles.map((file, index) => (
+                <li key={index} className="flex justify-between items-center">
+                  <span>{file.name}</span>
+                  {processingStatus.has(file.name + Date.now()) && (
+                    <span className="text-xs ml-2">
+                      {processingStatus.get(file.name + Date.now())}
+                      {uploadProgress.get(file.name + Date.now()) !== undefined && processingStatus.get(file.name + Date.now()) === "Uploading..." && (
+                        <Progress value={uploadProgress.get(file.name + Date.now())} className="w-[100px] h-2 ml-2 inline-block" />
+                      )}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
-        <Button onClick={handleUpload} disabled={!selectedFile}>
-          Upload and Process
+        <Button onClick={handleUpload} disabled={selectedFiles.length === 0 || isUploading}>
+          {isUploading ? "Uploading & Processing..." : "Upload and Process All"}
         </Button>
         <p className="text-xs text-gray-500 mt-4">
-          Note: Image processing and actual file storage require a backend server.
-          This demonstration simulates the client-side interaction.
+          Images will be uploaded to Supabase Storage and processed by an Edge Function.
         </p>
       </CardContent>
     </Card>
