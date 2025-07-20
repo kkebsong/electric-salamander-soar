@@ -1,19 +1,20 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { showSuccess, showError, showLoading, dismissToast } from "@/utils/toast";
 import { supabase } from "@/integrations/supabase/client"; // Import Supabase client
-import { X } from "lucide-react"; // Import X icon for removing files
+import { X, UploadCloud } from "lucide-react"; // Import X and UploadCloud icons
 
 const ImageUploader = () => {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [previewUrls, setPreviewUrls] = useState<string[]>([]); // New state for image previews
+  const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [processedImageUrls, setProcessedImageUrls] = useState<string[]>([]);
   const [isUploading, setIsUploading] = useState(false);
-  const [cropAmount, setCropAmount] = useState<number>(45); // State for crop amount
+  const [cropAmount, setCropAmount] = useState<number>(45);
+  const [isDragging, setIsDragging] = useState(false); // New state for drag-and-drop visual feedback
 
   // Effect to clean up object URLs when component unmounts or files change
   useEffect(() => {
@@ -22,31 +23,56 @@ const ImageUploader = () => {
     };
   }, [previewUrls]);
 
+  const processFiles = useCallback((files: FileList | File[]) => {
+    const pngFiles = Array.from(files).filter(file => file.type === 'image/png');
+    if (pngFiles.length === 0 && files.length > 0) {
+      showError("Only PNG images are supported. Please select PNG files.");
+      return;
+    }
+    setSelectedFiles(prevFiles => [...prevFiles, ...pngFiles]);
+    setProcessedImageUrls([]);
+
+    const newPreviewUrls = pngFiles.map(file => URL.createObjectURL(file));
+    setPreviewUrls(prevUrls => [...prevUrls, ...newPreviewUrls]);
+  }, []);
+
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files) {
-      const files = Array.from(event.target.files);
-      setSelectedFiles(files);
-      setProcessedImageUrls([]); // Clear previous processed image URLs
-
-      // Create object URLs for previews
-      const newPreviewUrls = files.map(file => URL.createObjectURL(file));
-      setPreviewUrls(newPreviewUrls);
-    } else {
-      setSelectedFiles([]);
-      setPreviewUrls([]);
+      processFiles(event.target.files);
     }
   };
 
+  const handleDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDragging(false);
+    if (event.dataTransfer.files && event.dataTransfer.files.length > 0) {
+      processFiles(event.dataTransfer.files);
+      event.dataTransfer.clearData();
+    }
+  }, [processFiles]);
+
   const handleCropAmountChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const value = parseInt(event.target.value, 10);
-    setCropAmount(isNaN(value) ? 0 : value); // Ensure it's a number, default to 0 if invalid
+    setCropAmount(isNaN(value) ? 0 : value);
   };
 
   const handleRemoveFile = (indexToRemove: number) => {
     const newSelectedFiles = selectedFiles.filter((_, index) => index !== indexToRemove);
     const newPreviewUrls = previewUrls.filter((_, index) => index !== indexToRemove);
     
-    // Revoke the object URL for the removed file to free up memory
     URL.revokeObjectURL(previewUrls[indexToRemove]);
 
     setSelectedFiles(newSelectedFiles);
@@ -76,7 +102,6 @@ const ImageUploader = () => {
       const rawFilePath = fileName;
 
       try {
-        // 1. Upload the raw image to the 'raw-images' bucket
         const { error: uploadError } = await supabase.storage
           .from('raw-images')
           .upload(rawFilePath, file, {
@@ -88,7 +113,6 @@ const ImageUploader = () => {
           throw new Error(`Upload failed for ${file.name}: ${uploadError.message}`);
         }
 
-        // 2. Invoke the Edge Function for processing
         const edgeFunctionUrl = `https://jitmryvgkeuwmmzjcfwj.supabase.co/functions/v1/process-image`; 
         
         const response = await fetch(edgeFunctionUrl, {
@@ -97,7 +121,7 @@ const ImageUploader = () => {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
           },
-          body: JSON.stringify({ filePath: rawFilePath, cropAmount: cropAmount }), // Pass cropAmount
+          body: JSON.stringify({ filePath: rawFilePath, cropAmount: cropAmount }),
         });
 
         if (!response.ok) {
@@ -115,7 +139,6 @@ const ImageUploader = () => {
           throw new Error(`Processing failed for ${file.name}: No processed image URL returned.`);
         }
 
-        // 3. Optionally, delete the raw image after successful processing
         const { error: deleteError } = await supabase.storage
           .from('raw-images')
           .remove([rawFilePath]);
@@ -133,8 +156,8 @@ const ImageUploader = () => {
     setProcessedImageUrls(newProcessedUrls);
     dismissToast(toastId);
     setIsUploading(false);
-    setSelectedFiles([]); // Clear selected files after processing
-    setPreviewUrls([]); // Clear previews after processing
+    setSelectedFiles([]);
+    setPreviewUrls([]);
 
     if (newProcessedUrls.length > 0) {
       showSuccess(`Successfully processed ${newProcessedUrls.length} out of ${totalFiles} images!`);
@@ -152,24 +175,22 @@ const ImageUploader = () => {
     showSuccess(`Attempting to download ${processedImageUrls.length} images. Please allow pop-ups if prompted.`);
 
     processedImageUrls.forEach((url, index) => {
-      // Create a temporary anchor element
       const link = document.createElement('a');
       link.href = url;
-      // Set the download attribute to suggest a filename
       link.download = url.split('/').pop() || `processed_image_${index}.jpeg`;
-      document.body.appendChild(link); // Append to body to make it clickable
-      link.click(); // Programmatically click the link to trigger download
-      document.body.removeChild(link); // Remove the link after clicking
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     });
   };
 
   const handleReset = () => {
     setSelectedFiles([]);
-    previewUrls.forEach(url => URL.revokeObjectURL(url)); // Revoke all preview URLs on reset
+    previewUrls.forEach(url => URL.revokeObjectURL(url));
     setPreviewUrls([]); 
     setProcessedImageUrls([]);
     setIsUploading(false);
-    setCropAmount(45); // Reset crop amount to default
+    setCropAmount(45);
     showSuccess("All selections and processed images have been cleared.");
   };
 
@@ -182,12 +203,31 @@ const ImageUploader = () => {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid w-full max-w-sm items-center gap-1.5">
-          <label htmlFor="picture" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-            Pictures (PNG only)
-          </label>
-          <Input id="picture" type="file" accept="image/png" multiple onChange={handleFileChange} />
+        <div 
+          className={`relative border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
+            isDragging ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-300 dark:border-gray-700 hover:border-gray-400 dark:hover:border-gray-600'
+          }`}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
+          <Input 
+            id="picture" 
+            type="file" 
+            accept="image/png" 
+            multiple 
+            onChange={handleFileChange} 
+            className="absolute inset-0 opacity-0 cursor-pointer" 
+          />
+          <div className="flex flex-col items-center justify-center space-y-2">
+            <UploadCloud className="h-8 w-8 text-gray-400 dark:text-gray-500" />
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              Drag & drop PNG images here, or <span className="text-blue-500 hover:underline">click to browse</span>
+            </p>
+            <p className="text-xs text-gray-500 dark:text-gray-500">Only PNG files are supported.</p>
+          </div>
         </div>
+
         <div className="grid w-full max-w-sm items-center gap-1.5">
           <label htmlFor="crop-amount" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
             Crop Amount (pixels from bottom)
