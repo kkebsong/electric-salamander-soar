@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,16 +9,30 @@ import { supabase } from "@/integrations/supabase/client"; // Import Supabase cl
 
 const ImageUploader = () => {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [previewUrls, setPreviewUrls] = useState<string[]>([]); // New state for image previews
   const [processedImageUrls, setProcessedImageUrls] = useState<string[]>([]);
   const [isUploading, setIsUploading] = useState(false);
-  const [cropAmount, setCropAmount] = useState<number>(45); // New state for crop amount
+  const [cropAmount, setCropAmount] = useState<number>(45); // State for crop amount
+
+  // Effect to clean up object URLs when component unmounts or files change
+  useEffect(() => {
+    return () => {
+      previewUrls.forEach(url => URL.revokeObjectURL(url));
+    };
+  }, [previewUrls]);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files) {
-      setSelectedFiles(Array.from(event.target.files));
+      const files = Array.from(event.target.files);
+      setSelectedFiles(files);
       setProcessedImageUrls([]); // Clear previous processed image URLs
+
+      // Create object URLs for previews
+      const newPreviewUrls = files.map(file => URL.createObjectURL(file));
+      setPreviewUrls(newPreviewUrls);
     } else {
       setSelectedFiles([]);
+      setPreviewUrls([]);
     }
   };
 
@@ -107,6 +121,7 @@ const ImageUploader = () => {
     dismissToast(toastId);
     setIsUploading(false);
     setSelectedFiles([]); // Clear selected files after processing
+    setPreviewUrls([]); // Clear previews after processing
 
     if (newProcessedUrls.length > 0) {
       showSuccess(`Successfully processed ${newProcessedUrls.length} out of ${totalFiles} images!`);
@@ -137,6 +152,7 @@ const ImageUploader = () => {
 
   const handleReset = () => {
     setSelectedFiles([]);
+    setPreviewUrls([]); // Clear previews on reset
     setProcessedImageUrls([]);
     setIsUploading(false);
     setCropAmount(45); // Reset crop amount to default
@@ -174,11 +190,16 @@ const ImageUploader = () => {
         {selectedFiles.length > 0 && (
           <div className="text-sm text-muted-foreground">
             <p>Selected files ({selectedFiles.length}):</p>
-            <ul className="list-disc list-inside max-h-24 overflow-y-auto">
-              {selectedFiles.map((file, index) => (
-                <li key={index}>{file.name}</li>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2 max-h-40 overflow-y-auto">
+              {previewUrls.map((url, index) => (
+                <div key={index} className="relative group">
+                  <img src={url} alt={`Preview ${index}`} className="w-full h-20 object-cover rounded-md shadow-sm" />
+                  <span className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 text-white text-xs p-1 truncate rounded-b-md">
+                    {selectedFiles[index]?.name}
+                  </span>
+                </div>
               ))}
-            </ul>
+            </div>
           </div>
         )}
         <div className="flex flex-col sm:flex-row gap-2">
