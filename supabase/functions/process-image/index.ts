@@ -38,7 +38,7 @@ serve(async (req) => {
       });
     }
 
-    const { filePath } = parsedBody;
+    const { filePath, cropAmount } = parsedBody; // Get cropAmount from body
 
     if (!filePath) {
       return new Response(JSON.stringify({ error: 'Missing filePath in request body.' }), {
@@ -46,6 +46,10 @@ serve(async (req) => {
         status: 400,
       });
     }
+
+    // Validate cropAmount
+    const actualCropAmount = typeof cropAmount === 'number' && cropAmount >= 0 ? cropAmount : 45; // Default to 45 if not provided or invalid
+    console.log(`Edge Function: Using crop amount: ${actualCropAmount}px`);
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -87,11 +91,10 @@ serve(async (req) => {
       });
     }
 
-    // Обрезаем 45px снизу
-    const cropAmount = 45;
-    const newHeight = image.height - cropAmount;
+    // Обрезаем снизу на указанное количество пикселей
+    const newHeight = image.height - actualCropAmount;
     if (newHeight <= 0) {
-      return new Response(JSON.stringify({ error: `Image is too short (${image.height}px) to crop ${cropAmount}px from the bottom.` }), {
+      return new Response(JSON.stringify({ error: `Image is too short (${image.height}px) to crop ${actualCropAmount}px from the bottom.` }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 400,
       });
@@ -102,7 +105,7 @@ serve(async (req) => {
     const processedImageBuffer = await image.encode(0); 
 
     // 3. Загружаем обработанное изображение в бакет 'processed-images'
-    const processedFileName = filePath.replace(/\.png$/i, '_cropped.jpeg'); // Меняем расширение и добавляем _cropped
+    const processedFileName = filePath.replace(/\.png$/i, `_cropped_${actualCropAmount}px.jpeg`); // Меняем расширение и добавляем _cropped
     const { error: uploadProcessedError } = await supabase.storage
       .from('processed-images')
       .upload(processedFileName, processedImageBuffer, {

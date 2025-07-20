@@ -11,6 +11,7 @@ const ImageUploader = () => {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [processedImageUrls, setProcessedImageUrls] = useState<string[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [cropAmount, setCropAmount] = useState<number>(45); // New state for crop amount
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files) {
@@ -21,9 +22,18 @@ const ImageUploader = () => {
     }
   };
 
+  const handleCropAmountChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const value = parseInt(event.target.value, 10);
+    setCropAmount(isNaN(value) ? 0 : value); // Ensure it's a number, default to 0 if invalid
+  };
+
   const handleUpload = async () => {
     if (selectedFiles.length === 0) {
       showError("Please select at least one file first.");
+      return;
+    }
+    if (cropAmount < 0) {
+      showError("Crop amount cannot be negative.");
       return;
     }
 
@@ -60,7 +70,7 @@ const ImageUploader = () => {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
           },
-          body: JSON.stringify({ filePath: rawFilePath }),
+          body: JSON.stringify({ filePath: rawFilePath, cropAmount: cropAmount }), // Pass cropAmount
         });
 
         if (!response.ok) {
@@ -129,6 +139,7 @@ const ImageUploader = () => {
     setSelectedFiles([]);
     setProcessedImageUrls([]);
     setIsUploading(false);
+    setCropAmount(45); // Reset crop amount to default
     showSuccess("All selections and processed images have been cleared.");
   };
 
@@ -137,7 +148,7 @@ const ImageUploader = () => {
       <CardHeader>
         <CardTitle>Image Cropper & Uploader</CardTitle>
         <CardDescription>
-          Select PNG images to crop 45px from the bottom and convert to JPEG.
+          Select PNG images to crop from the bottom and convert to JPEG.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -146,6 +157,19 @@ const ImageUploader = () => {
             Pictures (PNG only)
           </label>
           <Input id="picture" type="file" accept="image/png" multiple onChange={handleFileChange} />
+        </div>
+        <div className="grid w-full max-w-sm items-center gap-1.5">
+          <label htmlFor="crop-amount" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+            Crop Amount (pixels from bottom)
+          </label>
+          <Input 
+            id="crop-amount" 
+            type="number" 
+            value={cropAmount} 
+            onChange={handleCropAmountChange} 
+            min="0" 
+            placeholder="e.g., 45"
+          />
         </div>
         {selectedFiles.length > 0 && (
           <div className="text-sm text-muted-foreground">
