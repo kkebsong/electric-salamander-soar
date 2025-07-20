@@ -5,33 +5,45 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { showSuccess, showError, showLoading, dismissToast } from "@/utils/toast";
-import { supabase } from "@/integrations/supabase/client"; // Import Supabase client
-import { X, UploadCloud } from "lucide-react"; // Import X and UploadCloud icons
+import { supabase } from "@/integrations/supabase/client";
+import { X, UploadCloud, Loader2, CheckCircle, XCircle } from "lucide-react"; // Import new icons
+import { cn } from "@/lib/utils"; // Import cn for conditional class names
+
+interface UploadFile {
+  id: string;
+  file: File;
+  previewUrl: string;
+  status: 'pending' | 'uploading' | 'processing' | 'success' | 'error';
+  processedUrl?: string;
+  errorMessage?: string;
+}
 
 const ImageUploader = () => {
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [previewUrls, setPreviewUrls] = useState<string[]>([]);
+  const [uploadFiles, setUploadFiles] = useState<UploadFile[]>([]); // Renamed from selectedFiles
   const [processedImageUrls, setProcessedImageUrls] = useState<string[]>([]);
-  const [isUploading, setIsUploading] = useState(false);
+  const [isUploadingGlobal, setIsUploadingGlobal] = useState(false); // Global state for disabling main button
   const [cropAmount, setCropAmount] = useState<number>(45);
-  const [isDragging, setIsDragging] = useState(false); // New state for drag-and-drop visual feedback
+  const [isDragging, setIsDragging] = useState(false);
 
   // Effect to clean up object URLs when component unmounts or files change
   useEffect(() => {
     return () => {
-      previewUrls.forEach(url => URL.revokeObjectURL(url));
+      uploadFiles.forEach(uploadFile => URL.revokeObjectURL(uploadFile.previewUrl));
     };
-  }, [previewUrls]);
+  }, [uploadFiles]);
 
   const processFiles = useCallback((files: FileList | File[]) => {
-    const newPngFiles: File[] = [];
-    const newPreviewUrls: string[] = [];
+    const newUploadFiles: UploadFile[] = [];
     const nonPngFiles: File[] = [];
 
     Array.from(files).forEach(file => {
       if (file.type === 'image/png') {
-        newPngFiles.push(file);
-        newPreviewUrls.push(URL.createObjectURL(file));
+        newUploadFiles.push({
+          id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`, // Unique ID
+          file: file,
+          previewUrl: URL.createObjectURL(file),
+          status: 'pending',
+        });
       } else {
         nonPngFiles.push(file);
       }
@@ -41,22 +53,19 @@ const ImageUploader = () => {
       showError(`Skipped ${nonPngFiles.length} non-PNG file(s). Only PNG images are supported.`);
     }
 
-    if (newPngFiles.length === 0 && files.length > 0 && nonPngFiles.length === 0) {
-      // This case means files were selected, but none were PNGs (and no specific non-PNG error was shown)
+    if (newUploadFiles.length === 0 && files.length > 0 && nonPngFiles.length === 0) {
       showError("No valid PNG images were selected.");
       return;
     }
 
-    setSelectedFiles(prevFiles => [...prevFiles, ...newPngFiles]);
-    setPreviewUrls(prevUrls => [...prevUrls, ...newPreviewUrls]);
+    setUploadFiles(prevFiles => [...prevFiles, ...newUploadFiles]);
     setProcessedImageUrls([]); // Clear processed images when new raw images are selected.
   }, []);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files) {
       processFiles(event.target.files);
-      // Clear the input value to allow selecting the same files again if needed
-      event.target.value = ''; 
+      event.target.value = '';
     }
   };
 
@@ -87,19 +96,17 @@ const ImageUploader = () => {
     setCropAmount(isNaN(value) ? 0 : value);
   };
 
-  const handleRemoveFile = (indexToRemove: number) => {
-    const newSelectedFiles = selectedFiles.filter((_, index) => index !== indexToRemove);
-    const newPreviewUrls = previewUrls.filter((_, index) => index !== indexToRemove);
-    
-    URL.revokeObjectURL(previewUrls[indexToRemove]);
-
-    setSelectedFiles(newSelectedFiles);
-    setPreviewUrls(newPreviewUrls);
-    showSuccess(`Removed file: ${selectedFiles[indexToRemove]?.name}`);
+  const handleRemoveFile = (idToRemove: string) => {
+    const fileToRemove = uploadFiles.find(f => f.id === idToRemove);
+    if (fileToRemove) {
+      URL.revokeObjectURL(fileToRemove.previewUrl);
+      setUploadFiles(prevFiles => prevFiles.filter(f => f.id !== idToRemove));
+      showSuccess(`Removed file: ${fileToRemove.file.name}`);
+    }
   };
 
   const handleUpload = async () => {
-    if (selectedFiles.length === 0) {
+    if (uploadFiles.length === 0) {
       showError("Please select at least one file first.");
       return;
     }
@@ -108,28 +115,34 @@ const ImageUploader = () => {
       return;
     }
 
-    setIsUploading(true);
-    const newProcessedUrls: string[] = [];
-    const totalFiles = selectedFiles.length;
+    setIsUploadingGlobal(true);
+    const successfulProcessedUrls: string[] = [];
+    const totalFiles = uploadFiles.length;
     let processedCount = 0;
 
-    const toastId = showLoading(`Processing 0/${totalFiles} images...`);
+    const globalToastId = showLoading(`Processing 0/${totalFiles} images...`);
 
-    for (const file of selectedFiles) {
-      const fileName = `${Date.now()}-${file.name}`;
+    for (const uploadFile of uploadFiles) {
+      const fileName = `${Date.now()}-${uploadFile.file.name}`;
       const rawFilePath = fileName;
+
+      // Update status to uploading
+      setUploadFiles(prev => prev.map(f => f.id === uploadFile.id ? { ...f, status: 'uploading' } : f));
 
       try {
         const { error: uploadError } = await supabase.storage
           .from('raw-images')
-          .upload(rawFilePath, file, {
+          .upload(rawFilePath, uploadFile.file, {
             cacheControl: '3600',
             upsert: false,
           });
 
         if (uploadError) {
-          throw new Error(`Upload failed for ${file.name}: ${uploadError.message}`);
+          throw new Error(`Upload failed: ${uploadError.message}`);
         }
+
+        // Update status to processing
+        setUploadFiles(prev => prev.map(f => f.id === uploadFile.id ? { ...f, status: 'processing' } : f));
 
         const edgeFunctionUrl = `https://jitmryvgkeuwmmzjcfwj.supabase.co/functions/v1/process-image`; 
         
@@ -144,17 +157,18 @@ const ImageUploader = () => {
 
         if (!response.ok) {
           const errorData = await response.json();
-          throw new Error(`Processing failed for ${file.name} with status ${response.status}: ${errorData.error || 'Unknown error'}`);
+          throw new Error(`Processing failed with status ${response.status}: ${errorData.error || 'Unknown error'}`);
         }
 
         const data = await response.json();
 
         if (data && data.processedImageUrl) {
-          newProcessedUrls.push(data.processedImageUrl);
+          successfulProcessedUrls.push(data.processedImageUrl);
           processedCount++;
           showLoading(`Processing ${processedCount}/${totalFiles} images...`);
+          setUploadFiles(prev => prev.map(f => f.id === uploadFile.id ? { ...f, status: 'success', processedUrl: data.processedImageUrl } : f));
         } else {
-          throw new Error(`Processing failed for ${file.name}: No processed image URL returned.`);
+          throw new Error(`No processed image URL returned.`);
         }
 
         const { error: deleteError } = await supabase.storage
@@ -162,23 +176,24 @@ const ImageUploader = () => {
           .remove([rawFilePath]);
 
         if (deleteError) {
-          console.error(`Error deleting raw image ${file.name}:`, deleteError.message);
+          console.error(`Error deleting raw image ${uploadFile.file.name}:`, deleteError.message);
         }
 
       } catch (error: any) {
-        console.error(`Error processing ${file.name}:`, error);
-        showError(`Failed to process ${file.name}: ${error.message}`);
+        console.error(`Error processing ${uploadFile.file.name}:`, error);
+        setUploadFiles(prev => prev.map(f => f.id === uploadFile.id ? { ...f, status: 'error', errorMessage: error.message } : f));
+        showError(`Failed to process ${uploadFile.file.name}: ${error.message}`);
       }
     }
 
-    setProcessedImageUrls(newProcessedUrls);
-    dismissToast(toastId);
-    setIsUploading(false);
-    setSelectedFiles([]);
-    setPreviewUrls([]);
-
-    if (newProcessedUrls.length > 0) {
-      showSuccess(`Successfully processed ${newProcessedUrls.length} out of ${totalFiles} images!`);
+    setProcessedImageUrls(successfulProcessedUrls);
+    dismissToast(globalToastId);
+    setIsUploadingGlobal(false);
+    
+    // After all files are processed, clear the input list and show final toast
+    setUploadFiles([]); // Clear the input list
+    if (successfulProcessedUrls.length > 0) {
+      showSuccess(`Successfully processed ${successfulProcessedUrls.length} out of ${totalFiles} images!`);
     } else {
       showError("No images were successfully processed.");
     }
@@ -203,11 +218,10 @@ const ImageUploader = () => {
   };
 
   const handleReset = () => {
-    setSelectedFiles([]);
-    previewUrls.forEach(url => URL.revokeObjectURL(url));
-    setPreviewUrls([]); 
+    uploadFiles.forEach(uploadFile => URL.revokeObjectURL(uploadFile.previewUrl));
+    setUploadFiles([]); 
     setProcessedImageUrls([]);
-    setIsUploading(false);
+    setIsUploadingGlobal(false);
     setCropAmount(45);
     showSuccess("All selections and processed images have been cleared.");
   };
@@ -259,40 +273,57 @@ const ImageUploader = () => {
             placeholder="e.g., 45"
           />
         </div>
-        {selectedFiles.length > 0 && (
+        {uploadFiles.length > 0 && (
           <div className="text-sm text-muted-foreground">
-            <p>Selected files ({selectedFiles.length}):</p>
+            <p>Selected files ({uploadFiles.length}):</p>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2 max-h-40 overflow-y-auto">
-              {previewUrls.map((url, index) => (
-                <div key={index} className="relative group">
-                  <img src={url} alt={`Preview ${index}`} className="w-full h-20 object-cover rounded-md shadow-sm" />
+              {uploadFiles.map((uploadFile) => (
+                <div key={uploadFile.id} className="relative group">
+                  <img src={uploadFile.previewUrl} alt={`Preview ${uploadFile.file.name}`} className="w-full h-20 object-cover rounded-md shadow-sm" />
                   <span className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 text-white text-xs p-1 truncate rounded-b-md">
-                    {selectedFiles[index]?.name}
+                    {uploadFile.file.name}
                   </span>
                   <Button 
                     variant="destructive" 
                     size="icon" 
                     className="absolute top-1 right-1 h-6 w-6 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
-                    onClick={() => handleRemoveFile(index)}
+                    onClick={() => handleRemoveFile(uploadFile.id)}
+                    disabled={isUploadingGlobal} // Disable remove during upload
                   >
                     <X className="h-4 w-4" />
                   </Button>
+                  {uploadFile.status !== 'pending' && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-60 rounded-md">
+                      {uploadFile.status === 'uploading' || uploadFile.status === 'processing' ? (
+                        <Loader2 className="h-8 w-8 text-white animate-spin" />
+                      ) : uploadFile.status === 'success' ? (
+                        <CheckCircle className="h-8 w-8 text-green-400" />
+                      ) : (
+                        <XCircle className="h-8 w-8 text-red-400" />
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
+            {isUploadingGlobal && (
+              <p className="text-center mt-2 text-gray-500 dark:text-gray-400">
+                Processing in progress...
+              </p>
+            )}
           </div>
         )}
         <div className="flex flex-col sm:flex-row gap-2">
-          <Button onClick={handleUpload} disabled={selectedFiles.length === 0 || isUploading} className="flex-grow">
-            {isUploading ? "Processing..." : `Upload and Process ${selectedFiles.length > 0 ? `(${selectedFiles.length})` : ''} Images`}
+          <Button onClick={handleUpload} disabled={uploadFiles.length === 0 || isUploadingGlobal} className="flex-grow">
+            {isUploadingGlobal ? "Processing..." : `Upload and Process ${uploadFiles.length > 0 ? `(${uploadFiles.length})` : ''} Images`}
           </Button>
           {processedImageUrls.length > 0 && (
-            <Button onClick={handleDownloadAll} disabled={isUploading} className="flex-grow" variant="secondary">
+            <Button onClick={handleDownloadAll} disabled={isUploadingGlobal} className="flex-grow" variant="secondary">
               Download All ({processedImageUrls.length})
             </Button>
           )}
         </div>
-        {(selectedFiles.length > 0 || processedImageUrls.length > 0) && (
+        {(uploadFiles.length > 0 || processedImageUrls.length > 0) && (
           <Button onClick={handleReset} variant="outline" className="w-full">
             Reset
           </Button>
@@ -315,7 +346,7 @@ const ImageUploader = () => {
             </p>
           </div>
         ) : (
-          !isUploading && selectedFiles.length === 0 && (
+          !isUploadingGlobal && uploadFiles.length === 0 && (
             <p className="text-sm text-gray-500 dark:text-gray-400 text-center">
               No images processed yet. Upload a PNG to get started!
             </p>
