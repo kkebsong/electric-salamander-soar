@@ -13,8 +13,26 @@ serve(async (req) => {
 
   try {
     console.log('Edge Function: Request received.');
-    const { filePath } = await req.json(); // filePath теперь будет просто именем файла
-    console.log('Edge Function: Received filePath (now just filename):', filePath);
+    console.log('Edge Function: Content-Type:', req.headers.get('content-type'));
+
+    let requestBody;
+    try {
+      const rawBody = await req.text();
+      console.log('Edge Function: Raw request body:', rawBody);
+      if (!rawBody) {
+        throw new Error('Request body is empty.');
+      }
+      requestBody = JSON.parse(rawBody);
+    } catch (parseError: any) {
+      console.error('Edge Function: Error parsing request body:', parseError);
+      return new Response(JSON.stringify({ error: `Invalid request body: ${parseError.message}` }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 400,
+      });
+    }
+
+    const { filePath } = requestBody;
+    console.log('Edge Function: Received filePath:', filePath);
 
     if (!filePath) {
       console.error('Edge Function: File path is required.');
@@ -35,7 +53,7 @@ serve(async (req) => {
     );
     console.log('Edge Function: Supabase client created.');
 
-    const fileName = filePath.split('/').pop(); // Это все еще корректно извлечет имя файла
+    const fileName = filePath.split('/').pop();
     if (!fileName) {
       console.error('Edge Function: Invalid file path, could not extract file name.');
       return new Response(JSON.stringify({ error: 'Invalid file path' }), {
@@ -46,26 +64,50 @@ serve(async (req) => {
     console.log('Edge Function: Extracted fileName:', fileName);
 
     const processedFileName = fileName.replace(/\.png$/i, '.jpeg');
-    const newFilePath = `processed-images/${processedFileName}`; // Путь назначения в бакете 'processed-images'
-    console.log('Edge Function: New processed file path:', newFilePath);
+    console.log('Edge Function: New processed file name:', processedFileName);
 
-    console.log(`Edge Function: Attempting to move file from ${filePath} to ${processedFileName} in processed-images bucket.`);
-    // ИЗМЕНЕНО: Используем filePath напрямую, так как он теперь является путем внутри исходного бакета
-    const { data, error: moveError } = await supabaseClient
+    // 1. Download the raw image from the 'raw-images' bucket
+    console.log(`Edge Function: Attempting to download raw image: ${filePath} from 'raw-images'.`);
+    const { data: rawImageData, error: downloadError } = await supabaseClient
       .storage
-      .from('raw-images') // Исходный бакет
-      .move(filePath, processedFileName); // Используем processedFileName как путь внутри целевого бакета
+      .from('raw-images')
+      .download(filePath);
 
-    if (moveError) {
-      console.error('Edge Function: Error moving file:', moveError);
-      return new Response(JSON.stringify({ error: `Failed to move file: ${moveError.message}` }), {
+    if (downloadError) {
+      console.error('Edge Function: Error downloading raw image:', downloadError);
+      return new Response(JSON.stringify({ error: `Failed to download raw image: ${downloadError.message}` }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 500,
       });
     }
-    console.log('Edge Function: File moved successfully. Data:', data);
+    console.log('Edge Function: Raw image downloaded successfully.');
 
-    console.log(`Edge Function: Getting public URL for ${processedFileName} from processed-images bucket.`);
+    // 2. Simulate image processing and upload to 'processed-images' bucket
+    // In a real scenario, you would perform actual image cropping and conversion here.
+    // For this demonstration, we'll re-upload the same data but with a JPEG content type.
+    const processedImageBlob = rawImageData; 
+
+    console.log(`Edge Function: Attempting to upload processed image: ${processedFileName} to 'processed-images'.`);
+    const { error: uploadProcessedError } = await supabaseClient
+      .storage
+      .from('processed-images')
+      .upload(processedFileName, processedImageBlob, {
+        contentType: 'image/jpeg', // Assuming conversion to JPEG
+        cacheControl: '3600',
+        upsert: true, // Allow overwriting if file exists
+      });
+
+    if (uploadProcessedError) {
+      console.error('Edge Function: Error uploading processed image:', uploadProcessedError);
+      return new Response(JSON.stringify({ error: `Failed to upload processed image: ${uploadProcessedError.message}` }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 500,
+      });
+    }
+    console.log('Edge Function: Processed image uploaded successfully.');
+
+    // 3. Get the public URL for the processed image
+    console.log(`Edge Function: Getting public URL for ${processedFileName} from 'processed-images' bucket.`);
     const { data: publicUrlData } = supabaseClient
       .storage
       .from('processed-images')
@@ -79,6 +121,20 @@ serve(async (req) => {
       });
     }
     console.log('Edge Function: Public URL obtained:', publicUrlData.publicUrl);
+
+    // 4. Delete the raw image from the 'raw-images' bucket
+    console.log(`Edge Function: Attempting to delete raw image: ${filePath} from 'raw-images'.`);
+    const { error: deleteRawError } = await supabaseClient
+      .storage
+      .from('raw-images')
+      .remove([filePath]);
+
+    if (deleteRawError) {
+      console.error('Edge Function: Error deleting raw image:', deleteRawError);
+      // Don't return an error, as the main process was successful
+    } else {
+      console.log('Edge Function: Raw image deleted successfully.');
+    }
 
     return new Response(JSON.stringify({ processedImageUrl: publicUrlData.publicUrl }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
