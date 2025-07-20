@@ -3,7 +3,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import ReactCrop, {
   centerCrop,
-  make  Crop,
+  makeCrop, // Corrected from 'make Crop'
   PixelCrop,
   Crop as ReactCropType,
 } from "react-image-crop";
