@@ -116,18 +116,20 @@ const ImageUploader = () => {
     }
 
     setIsUploadingGlobal(true);
+    const successfulProcessedUrls: string[] = [];
     const totalFiles = uploadFiles.length;
-    const globalToastId = showLoading(`Processing ${totalFiles} images...`); // Initial toast message
+    let processedCount = 0;
 
-    const processingPromises = uploadFiles.map(async (uploadFile) => {
+    const globalToastId = showLoading(`Processing 0/${totalFiles} images...`);
+
+    for (const uploadFile of uploadFiles) {
       const fileName = `${Date.now()}-${uploadFile.file.name}`;
       const rawFilePath = fileName;
 
-      // Update status to uploading immediately for this specific file
+      // Update status to uploading
       setUploadFiles(prev => prev.map(f => f.id === uploadFile.id ? { ...f, status: 'uploading' } : f));
 
       try {
-        // Upload to raw-images bucket
         const { error: uploadError } = await supabase.storage
           .from('raw-images')
           .upload(rawFilePath, uploadFile.file, {
@@ -139,10 +141,9 @@ const ImageUploader = () => {
           throw new Error(`Upload failed: ${uploadError.message}`);
         }
 
-        // Update status to processing for this specific file
+        // Update status to processing
         setUploadFiles(prev => prev.map(f => f.id === uploadFile.id ? { ...f, status: 'processing' } : f));
 
-        // Call Edge Function
         const edgeFunctionUrl = `https://jitmryvgkeuwmmzjcfwj.supabase.co/functions/v1/process-image`; 
         
         const response = await fetch(edgeFunctionUrl, {
@@ -162,56 +163,37 @@ const ImageUploader = () => {
         const data = await response.json();
 
         if (data && data.processedImageUrl) {
-          // Delete raw image after successful processing
-          const { error: deleteError } = await supabase.storage
-            .from('raw-images')
-            .remove([rawFilePath]);
-
-          if (deleteError) {
-            console.error(`Error deleting raw image ${uploadFile.file.name}:`, deleteError.message);
-          }
-          return { id: uploadFile.id, status: 'success', processedUrl: data.processedImageUrl, errorMessage: undefined };
+          successfulProcessedUrls.push(data.processedImageUrl);
+          processedCount++;
+          showLoading(`Processing ${processedCount}/${totalFiles} images...`);
+          setUploadFiles(prev => prev.map(f => f.id === uploadFile.id ? { ...f, status: 'success', processedUrl: data.processedImageUrl } : f));
         } else {
           throw new Error(`No processed image URL returned.`);
         }
 
-      } catch (error: any) {
-        // Return error status for this file
-        return { id: uploadFile.id, status: 'error', errorMessage: error.message, processedUrl: undefined };
-      }
-    });
+        const { error: deleteError } = await supabase.storage
+          .from('raw-images')
+          .remove([rawFilePath]);
 
-    // Wait for all promises to complete
-    const results = await Promise.all(processingPromises);
-
-    let successfulProcessedUrls: string[] = [];
-    let successfulCount = 0;
-
-    // Update the state based on the results of all promises
-    setUploadFiles(prevFiles => {
-      return prevFiles.map(file => {
-        const result = results.find(r => r.id === file.id);
-        if (result) {
-          if (result.status === 'success') {
-            successfulProcessedUrls.push(result.processedUrl!);
-            successfulCount++;
-            return { ...file, status: 'success', processedUrl: result.processedUrl };
-          } else { // status is 'error'
-            showError(`Failed to process ${file.file.name}: ${result.errorMessage}`);
-            return { ...file, status: 'error', errorMessage: result.errorMessage };
-          }
+        if (deleteError) {
+          console.error(`Error deleting raw image ${uploadFile.file.name}:`, deleteError.message);
         }
-        return file; // Should not happen if all files are processed
-      });
-    });
+
+      } catch (error: any) {
+        console.error(`Error processing ${uploadFile.file.name}:`, error);
+        setUploadFiles(prev => prev.map(f => f.id === uploadFile.id ? { ...f, status: 'error', errorMessage: error.message } : f));
+        showError(`Failed to process ${uploadFile.file.name}: ${error.message}`);
+      }
+    }
 
     setProcessedImageUrls(successfulProcessedUrls);
     dismissToast(globalToastId);
     setIsUploadingGlobal(false);
-    setUploadFiles([]); // Clear the input list after all attempts
-
-    if (successfulCount > 0) {
-      showSuccess(`Successfully processed ${successfulCount} out of ${totalFiles} images!`);
+    
+    // After all files are processed, clear the input list and show final toast
+    setUploadFiles([]); // Clear the input list
+    if (successfulProcessedUrls.length > 0) {
+      showSuccess(`Successfully processed ${successfulProcessedUrls.length} out of ${totalFiles} images!`);
     } else {
       showError("No images were successfully processed.");
     }
