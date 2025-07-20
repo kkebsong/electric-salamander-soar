@@ -8,87 +8,100 @@ import { showSuccess, showError, showLoading, dismissToast } from "@/utils/toast
 import { supabase } from "@/integrations/supabase/client"; // Import Supabase client
 
 const ImageUploader = () => {
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [processedImageUrl, setProcessedImageUrl] = useState<string | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [processedImageUrls, setProcessedImageUrls] = useState<string[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files && event.target.files[0]) {
-      setSelectedFile(event.target.files[0]);
-      setProcessedImageUrl(null); // Clear previous processed image URL
+    if (event.target.files) {
+      setSelectedFiles(Array.from(event.target.files));
+      setProcessedImageUrls([]); // Clear previous processed image URLs
     } else {
-      setSelectedFile(null);
+      setSelectedFiles([]);
     }
   };
 
   const handleUpload = async () => {
-    if (!selectedFile) {
-      showError("Please select a file first.");
+    if (selectedFiles.length === 0) {
+      showError("Please select at least one file first.");
       return;
     }
 
-    const toastId = showLoading("Uploading and processing image...");
-    const fileName = `${Date.now()}-${selectedFile.name}`;
-    const rawFilePath = fileName;
+    setIsUploading(true);
+    const newProcessedUrls: string[] = [];
+    const totalFiles = selectedFiles.length;
+    let processedCount = 0;
 
-    try {
-      // 1. Upload the raw image to the 'raw-images' bucket
-      const { error: uploadError } = await supabase.storage
-        .from('raw-images')
-        .upload(rawFilePath, selectedFile, {
-          cacheControl: '3600',
-          upsert: false,
+    const toastId = showLoading(`Processing 0/${totalFiles} images...`);
+
+    for (const file of selectedFiles) {
+      const fileName = `${Date.now()}-${file.name}`;
+      const rawFilePath = fileName;
+
+      try {
+        // 1. Upload the raw image to the 'raw-images' bucket
+        const { error: uploadError } = await supabase.storage
+          .from('raw-images')
+          .upload(rawFilePath, file, {
+            cacheControl: '3600',
+            upsert: false,
+          });
+
+        if (uploadError) {
+          throw new Error(`Upload failed for ${file.name}: ${uploadError.message}`);
+        }
+
+        // 2. Invoke the Edge Function for processing
+        const edgeFunctionUrl = `https://jitmryvgkeuwmmzjcfwj.supabase.co/functions/v1/process-image`; 
+        
+        const response = await fetch(edgeFunctionUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({ filePath: rawFilePath }),
         });
 
-      if (uploadError) {
-        throw new Error(`Upload failed: ${uploadError.message}`);
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(`Processing failed for ${file.name} with status ${response.status}: ${errorData.error || 'Unknown error'}`);
+        }
+
+        const data = await response.json();
+
+        if (data && data.processedImageUrl) {
+          newProcessedUrls.push(data.processedImageUrl);
+          processedCount++;
+          showLoading(`Processing ${processedCount}/${totalFiles} images...`);
+        } else {
+          throw new Error(`Processing failed for ${file.name}: No processed image URL returned.`);
+        }
+
+        // 3. Optionally, delete the raw image after successful processing
+        const { error: deleteError } = await supabase.storage
+          .from('raw-images')
+          .remove([rawFilePath]);
+
+        if (deleteError) {
+          console.error(`Error deleting raw image ${file.name}:`, deleteError.message);
+        }
+
+      } catch (error: any) {
+        console.error(`Error processing ${file.name}:`, error);
+        showError(`Failed to process ${file.name}: ${error.message}`);
       }
+    }
 
-      showSuccess("Image uploaded to raw storage. Processing...");
+    setProcessedImageUrls(newProcessedUrls);
+    dismissToast(toastId);
+    setIsUploading(false);
+    setSelectedFiles([]); // Clear selected files after processing
 
-      // 2. Invoke the Edge Function for processing using direct fetch
-      // Используем жестко закодированный URL функции Edge Function
-      const edgeFunctionUrl = `https://jitmryvgkeuwmmzjcfwj.supabase.co/functions/v1/process-image`; 
-      
-      const response = await fetch(edgeFunctionUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          // Передаем ключ anon для авторизации, если функция требует аутентификации
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-        },
-        body: JSON.stringify({ filePath: rawFilePath }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`Processing failed with status ${response.status}: ${errorData.error || 'Unknown error'}`);
-      }
-
-      const data = await response.json();
-
-      if (data && data.processedImageUrl) {
-        setProcessedImageUrl(data.processedImageUrl);
-        showSuccess('Image processed and uploaded successfully!');
-      } else {
-        throw new Error('Processing failed: No processed image URL returned.');
-      }
-
-      // 3. Optionally, delete the raw image after successful processing
-      const { error: deleteError } = await supabase.storage
-        .from('raw-images')
-        .remove([rawFilePath]);
-
-      if (deleteError) {
-        console.error("Error deleting raw image:", deleteError.message);
-        // Не выбрасываем ошибку, так как основной процесс был успешным
-      }
-
-    } catch (error: any) {
-      console.error('Upload/Processing error:', error);
-      showError(`Failed to process and upload image: ${error.message}`);
-    } finally {
-      dismissToast(toastId);
-      setSelectedFile(null); // Очищаем выбранный файл после "загрузки"
+    if (newProcessedUrls.length > 0) {
+      showSuccess(`Successfully processed ${newProcessedUrls.length} out of ${totalFiles} images!`);
+    } else {
+      showError("No images were successfully processed.");
     }
   };
 
@@ -97,35 +110,49 @@ const ImageUploader = () => {
       <CardHeader>
         <CardTitle>Image Cropper & Uploader</CardTitle>
         <CardDescription>
-          Select a PNG image to crop 45px from the bottom and convert to JPEG.
-          (Processing happens on a simulated backend)
+          Select PNG images to crop 45px from the bottom and convert to JPEG.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid w-full max-w-sm items-center gap-1.5">
           <label htmlFor="picture" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-            Picture
+            Pictures (PNG only)
           </label>
-          <Input id="picture" type="file" accept="image/png" onChange={handleFileChange} />
+          <Input id="picture" type="file" accept="image/png" multiple onChange={handleFileChange} />
         </div>
-        {selectedFile && (
-          <p className="text-sm text-muted-foreground">Selected file: {selectedFile.name}</p>
+        {selectedFiles.length > 0 && (
+          <div className="text-sm text-muted-foreground">
+            <p>Selected files ({selectedFiles.length}):</p>
+            <ul className="list-disc list-inside max-h-24 overflow-y-auto">
+              {selectedFiles.map((file, index) => (
+                <li key={index}>{file.name}</li>
+              ))}
+            </ul>
+          </div>
         )}
-        <Button onClick={handleUpload} disabled={!selectedFile}>
-          Upload and Process
+        <Button onClick={handleUpload} disabled={selectedFiles.length === 0 || isUploading}>
+          {isUploading ? "Processing..." : `Upload and Process ${selectedFiles.length > 0 ? `(${selectedFiles.length})` : ''} Images`}
         </Button>
-        {processedImageUrl && (
+        {processedImageUrls.length > 0 && (
           <div className="mt-4">
-            <p className="text-sm font-medium">Processed Image:</p>
-            <a href={processedImageUrl} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline break-all">
-              {processedImageUrl}
-            </a>
-            <img src={processedImageUrl} alt="Processed" className="mt-2 max-w-full h-auto rounded-md shadow-md" />
+            <p className="text-sm font-medium mb-2">Processed Images:</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-60 overflow-y-auto">
+              {processedImageUrls.map((url, index) => (
+                <div key={index} className="border rounded-md p-2 flex flex-col items-center">
+                  <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline text-xs break-all mb-1">
+                    {url.split('/').pop()}
+                  </a>
+                  <img src={url} alt={`Processed ${index}`} className="max-w-full h-auto rounded-md shadow-md" />
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-gray-500 mt-2">
+              Right-click or long-press on an image/link to save it.
+            </p>
           </div>
         )}
         <p className="text-xs text-gray-500 mt-4">
-          Note: Actual image cropping and format conversion require a dedicated image processing library or service.
-          This demonstration simulates the client-side interaction and file movement within Supabase Storage.
+          Note: Actual image cropping and format conversion happen on the Supabase Edge Function.
         </p>
       </CardContent>
     </Card>
