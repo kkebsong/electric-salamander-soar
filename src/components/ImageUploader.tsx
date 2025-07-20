@@ -24,21 +24,39 @@ const ImageUploader = () => {
   }, [previewUrls]);
 
   const processFiles = useCallback((files: FileList | File[]) => {
-    const pngFiles = Array.from(files).filter(file => file.type === 'image/png');
-    if (pngFiles.length === 0 && files.length > 0) {
-      showError("Only PNG images are supported. Please select PNG files.");
+    const newPngFiles: File[] = [];
+    const newPreviewUrls: string[] = [];
+    const nonPngFiles: File[] = [];
+
+    Array.from(files).forEach(file => {
+      if (file.type === 'image/png') {
+        newPngFiles.push(file);
+        newPreviewUrls.push(URL.createObjectURL(file));
+      } else {
+        nonPngFiles.push(file);
+      }
+    });
+
+    if (nonPngFiles.length > 0) {
+      showError(`Skipped ${nonPngFiles.length} non-PNG file(s). Only PNG images are supported.`);
+    }
+
+    if (newPngFiles.length === 0 && files.length > 0 && nonPngFiles.length === 0) {
+      // This case means files were selected, but none were PNGs (and no specific non-PNG error was shown)
+      showError("No valid PNG images were selected.");
       return;
     }
-    setSelectedFiles(prevFiles => [...prevFiles, ...pngFiles]);
-    setProcessedImageUrls([]);
 
-    const newPreviewUrls = pngFiles.map(file => URL.createObjectURL(file));
+    setSelectedFiles(prevFiles => [...prevFiles, ...newPngFiles]);
     setPreviewUrls(prevUrls => [...prevUrls, ...newPreviewUrls]);
+    setProcessedImageUrls([]); // Clear processed images when new raw images are selected.
   }, []);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files) {
       processFiles(event.target.files);
+      // Clear the input value to allow selecting the same files again if needed
+      event.target.value = ''; 
     }
   };
 
@@ -279,7 +297,7 @@ const ImageUploader = () => {
             Reset
           </Button>
         )}
-        {processedImageUrls.length > 0 && (
+        {processedImageUrls.length > 0 ? (
           <div className="mt-4">
             <p className="text-sm font-medium mb-2">Processed Images:</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-60 overflow-y-auto">
@@ -296,6 +314,12 @@ const ImageUploader = () => {
               Right-click or long-press on an image/link to save it.
             </p>
           </div>
+        ) : (
+          !isUploading && selectedFiles.length === 0 && (
+            <p className="text-sm text-gray-500 dark:text-gray-400 text-center">
+              No images processed yet. Upload a PNG to get started!
+            </p>
+          )
         )}
         <p className="text-xs text-gray-500 mt-4">
           Note: Actual image cropping and format conversion happen on the Supabase Edge Function.
