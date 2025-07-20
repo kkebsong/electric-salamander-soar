@@ -28,8 +28,7 @@ const ImageUploader = () => {
 
     const toastId = showLoading("Uploading and processing image...");
     const fileName = `${Date.now()}-${selectedFile.name}`;
-    // ИЗМЕНЕНО: rawFilePath теперь содержит только имя файла, без префикса бакета
-    const rawFilePath = fileName; 
+    const rawFilePath = fileName;
 
     try {
       // 1. Upload the raw image to the 'raw-images' bucket
@@ -46,16 +45,26 @@ const ImageUploader = () => {
 
       showSuccess("Image uploaded to raw storage. Processing...");
 
-      // 2. Invoke the Edge Function for processing
-      // ПЕРЕДАЕМ ТОЛЬКО ИМЯ ФАЙЛА В EDGE FUNCTION
-      const { data, error: invokeError } = await supabase.functions.invoke('process-image', {
-        body: JSON.stringify({ filePath: rawFilePath }), 
-        headers: { 'Content-Type': 'application/json' },
+      // 2. Invoke the Edge Function for processing using direct fetch
+      // Используем жестко закодированный URL функции Edge Function
+      const edgeFunctionUrl = `https://jitmryvgkeuwmmzjcfwj.supabase.co/functions/v1/process-image`; 
+      
+      const response = await fetch(edgeFunctionUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          // Передаем ключ anon для авторизации, если функция требует аутентификации
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+        },
+        body: JSON.stringify({ filePath: rawFilePath }),
       });
 
-      if (invokeError) {
-        throw new Error(`Processing failed: ${invokeError.message}`);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(`Processing failed with status ${response.status}: ${errorData.error || 'Unknown error'}`);
       }
+
+      const data = await response.json();
 
       if (data && data.processedImageUrl) {
         setProcessedImageUrl(data.processedImageUrl);
@@ -67,11 +76,11 @@ const ImageUploader = () => {
       // 3. Optionally, delete the raw image after successful processing
       const { error: deleteError } = await supabase.storage
         .from('raw-images')
-        .remove([rawFilePath]); // Используем то же имя файла для удаления
+        .remove([rawFilePath]);
 
       if (deleteError) {
         console.error("Error deleting raw image:", deleteError.message);
-        // Don't throw, as the main process was successful
+        // Не выбрасываем ошибку, так как основной процесс был успешным
       }
 
     } catch (error: any) {
@@ -79,7 +88,7 @@ const ImageUploader = () => {
       showError(`Failed to process and upload image: ${error.message}`);
     } finally {
       dismissToast(toastId);
-      setSelectedFile(null); // Clear selected file after "upload"
+      setSelectedFile(null); // Очищаем выбранный файл после "загрузки"
     }
   };
 
