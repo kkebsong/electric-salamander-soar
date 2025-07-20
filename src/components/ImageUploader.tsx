@@ -105,6 +105,26 @@ const ImageUploader = () => {
     }
   };
 
+  const handleDownloadAll = () => {
+    if (processedImageUrls.length === 0) {
+      showError("No processed images to download.");
+      return;
+    }
+
+    showSuccess(`Attempting to download ${processedImageUrls.length} images. Please allow pop-ups if prompted.`);
+
+    processedImageUrls.forEach((url, index) => {
+      // Create a temporary anchor element
+      const link = document.createElement('a');
+      link.href = url;
+      // Set the download attribute to suggest a filename
+      link.download = url.split('/').pop() || `processed_image_${index}.jpeg`;
+      document.body.appendChild(link); // Append to body to make it clickable
+      link.click(); // Programmatically click the link to trigger download
+      document.body.removeChild(link); // Remove the link after clicking
+    });
+  };
+
   return (
     <Card className="w-full max-w-md mx-auto">
       <CardHeader>
@@ -130,9 +150,16 @@ const ImageUploader = () => {
             </ul>
           </div>
         )}
-        <Button onClick={handleUpload} disabled={selectedFiles.length === 0 || isUploading}>
-          {isUploading ? "Processing..." : `Upload and Process ${selectedFiles.length > 0 ? `(${selectedFiles.length})` : ''} Images`}
-        </Button>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <Button onClick={handleUpload} disabled={selectedFiles.length === 0 || isUploading} className="flex-grow">
+            {isUploading ? "Processing..." : `Upload and Process ${selectedFiles.length > 0 ? `(${selectedFiles.length})` : ''} Images`}
+          </Button>
+          {processedImageUrls.length > 0 && (
+            <Button onClick={handleDownloadAll} disabled={isUploading} className="flex-grow" variant="secondary">
+              Download All ({processedImageUrls.length})
+            </Button>
+          )}
+        </div>
         {processedImageUrls.length > 0 && (
           <div className="mt-4">
             <p className="text-sm font-medium mb-2">Processed Images:</p>
