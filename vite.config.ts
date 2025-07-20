@@ -14,4 +14,7 @@ export default defineConfig(() => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  optimizeDeps: {
+    exclude: ['react-image-crop'], // Exclude react-image-crop from pre-bundling
+  },
 }));
