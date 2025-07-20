@@ -199,7 +199,7 @@ const ImageUploader = () => {
     }
   };
 
-  const handleDownloadAll = () => {
+  const handleDownloadAll = async () => {
     if (processedImageUrls.length === 0) {
       showError("No processed images to download.");
       return;
@@ -207,14 +207,28 @@ const ImageUploader = () => {
 
     showSuccess(`Attempting to download ${processedImageUrls.length} images. Please allow pop-ups if prompted.`);
 
-    processedImageUrls.forEach((url, index) => {
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = url.split('/').pop() || `processed_image_${index}.jpeg`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    });
+    for (const url of processedImageUrls) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch image: ${response.statusText}`);
+        }
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = url.split('/').pop() || `processed_image.jpeg`; // Use original filename or a generic one
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        URL.revokeObjectURL(blobUrl); // Clean up the object URL
+      } catch (error) {
+        console.error("Error downloading image:", error);
+        showError(`Failed to download an image: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
   };
 
   const handleReset = () => {
