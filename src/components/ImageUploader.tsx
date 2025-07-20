@@ -5,13 +5,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { showSuccess, showError, showLoading, dismissToast } from "@/utils/toast";
+import { supabase } from "@/integrations/supabase/client"; // Import Supabase client
 
 const ImageUploader = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [processedImageUrl, setProcessedImageUrl] = useState<string | null>(null);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
       setSelectedFile(event.target.files[0]);
+      setProcessedImageUrl(null); // Clear previous processed image URL
     } else {
       setSelectedFile(null);
     }
@@ -24,34 +27,58 @@ const ImageUploader = () => {
     }
 
     const toastId = showLoading("Uploading and processing image...");
+    const fileName = `${Date.now()}-${selectedFile.name}`;
+    const rawFilePath = `raw-images/${fileName}`;
 
-    // Simulate API call to a backend for image processing and upload
-    // In a real application, you would send `selectedFile` to your server here.
-    // Example:
-    // const formData = new FormData();
-    // formData.append('image', selectedFile);
-    // try {
-    //   const response = await fetch('/api/upload-and-process', {
-    //     method: 'POST',
-    //     body: formData,
-    //   });
-    //   if (!response.ok) throw new Error('Upload failed');
-    //   const result = await response.json();
-    //   console.log('Upload successful:', result);
-    //   showSuccess('Image processed and uploaded successfully!');
-    // } catch (error) {
-    //   console.error('Upload error:', error);
-    //   showError('Failed to process and upload image.');
-    // } finally {
-    //   dismissToast(toastId);
-    // }
+    try {
+      // 1. Upload the raw image to the 'raw-images' bucket
+      const { error: uploadError } = await supabase.storage
+        .from('raw-images')
+        .upload(rawFilePath, selectedFile, {
+          cacheControl: '3600',
+          upsert: false,
+        });
 
-    // Simulating a delay for the "upload"
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+      if (uploadError) {
+        throw new Error(`Upload failed: ${uploadError.message}`);
+      }
 
-    dismissToast(toastId);
-    showSuccess(`Successfully "uploaded" and "processed" ${selectedFile.name}!`);
-    setSelectedFile(null); // Clear selected file after "upload"
+      showSuccess("Image uploaded to raw storage. Processing...");
+
+      // 2. Invoke the Edge Function for processing
+      const { data, error: invokeError } = await supabase.functions.invoke('process-image', {
+        body: JSON.stringify({ filePath: rawFilePath }),
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (invokeError) {
+        throw new Error(`Processing failed: ${invokeError.message}`);
+      }
+
+      if (data && data.processedImageUrl) {
+        setProcessedImageUrl(data.processedImageUrl);
+        showSuccess('Image processed and uploaded successfully!');
+      } else {
+        throw new Error('Processing failed: No processed image URL returned.');
+      }
+
+      // 3. Optionally, delete the raw image after successful processing
+      const { error: deleteError } = await supabase.storage
+        .from('raw-images')
+        .remove([rawFilePath]);
+
+      if (deleteError) {
+        console.error("Error deleting raw image:", deleteError.message);
+        // Don't throw, as the main process was successful
+      }
+
+    } catch (error: any) {
+      console.error('Upload/Processing error:', error);
+      showError(`Failed to process and upload image: ${error.message}`);
+    } finally {
+      dismissToast(toastId);
+      setSelectedFile(null); // Clear selected file after "upload"
+    }
   };
 
   return (
@@ -76,9 +103,18 @@ const ImageUploader = () => {
         <Button onClick={handleUpload} disabled={!selectedFile}>
           Upload and Process
         </Button>
+        {processedImageUrl && (
+          <div className="mt-4">
+            <p className="text-sm font-medium">Processed Image:</p>
+            <a href={processedImageUrl} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline break-all">
+              {processedImageUrl}
+            </a>
+            <img src={processedImageUrl} alt="Processed" className="mt-2 max-w-full h-auto rounded-md shadow-md" />
+          </div>
+        )}
         <p className="text-xs text-gray-500 mt-4">
-          Note: Image processing and actual file storage require a backend server.
-          This demonstration simulates the client-side interaction.
+          Note: Actual image cropping and format conversion require a dedicated image processing library or service.
+          This demonstration simulates the client-side interaction and file movement within Supabase Storage.
         </p>
       </CardContent>
     </Card>
