@@ -13,8 +13,8 @@ serve(async (req) => {
 
   try {
     console.log('Edge Function: Request received.');
-    const { filePath } = await req.json();
-    console.log('Edge Function: Received filePath:', filePath);
+    const { filePath } = await req.json(); // filePath теперь будет просто именем файла
+    console.log('Edge Function: Received filePath (now just filename):', filePath);
 
     if (!filePath) {
       console.error('Edge Function: File path is required.');
@@ -35,7 +35,7 @@ serve(async (req) => {
     );
     console.log('Edge Function: Supabase client created.');
 
-    const fileName = filePath.split('/').pop();
+    const fileName = filePath.split('/').pop(); // Это все еще корректно извлечет имя файла
     if (!fileName) {
       console.error('Edge Function: Invalid file path, could not extract file name.');
       return new Response(JSON.stringify({ error: 'Invalid file path' }), {
@@ -46,14 +46,15 @@ serve(async (req) => {
     console.log('Edge Function: Extracted fileName:', fileName);
 
     const processedFileName = fileName.replace(/\.png$/i, '.jpeg');
-    const newFilePath = `processed-images/${processedFileName}`;
+    const newFilePath = `processed-images/${processedFileName}`; // Путь назначения в бакете 'processed-images'
     console.log('Edge Function: New processed file path:', newFilePath);
 
-    console.log(`Edge Function: Attempting to move file from ${filePath} to ${newFilePath}`);
+    console.log(`Edge Function: Attempting to move file from ${filePath} to ${processedFileName} in processed-images bucket.`);
+    // ИЗМЕНЕНО: Используем filePath напрямую, так как он теперь является путем внутри исходного бакета
     const { data, error: moveError } = await supabaseClient
       .storage
-      .from('raw-images')
-      .move(filePath, newFilePath);
+      .from('raw-images') // Исходный бакет
+      .move(filePath, processedFileName); // Используем processedFileName как путь внутри целевого бакета
 
     if (moveError) {
       console.error('Edge Function: Error moving file:', moveError);

@@ -28,7 +28,8 @@ const ImageUploader = () => {
 
     const toastId = showLoading("Uploading and processing image...");
     const fileName = `${Date.now()}-${selectedFile.name}`;
-    const rawFilePath = `raw-images/${fileName}`;
+    // ИЗМЕНЕНО: rawFilePath теперь содержит только имя файла, без префикса бакета
+    const rawFilePath = fileName; 
 
     try {
       // 1. Upload the raw image to the 'raw-images' bucket
@@ -46,8 +47,9 @@ const ImageUploader = () => {
       showSuccess("Image uploaded to raw storage. Processing...");
 
       // 2. Invoke the Edge Function for processing
+      // ПЕРЕДАЕМ ТОЛЬКО ИМЯ ФАЙЛА В EDGE FUNCTION
       const { data, error: invokeError } = await supabase.functions.invoke('process-image', {
-        body: JSON.stringify({ filePath: rawFilePath }),
+        body: JSON.stringify({ filePath: rawFilePath }), 
         headers: { 'Content-Type': 'application/json' },
       });
 
@@ -65,7 +67,7 @@ const ImageUploader = () => {
       // 3. Optionally, delete the raw image after successful processing
       const { error: deleteError } = await supabase.storage
         .from('raw-images')
-        .remove([rawFilePath]);
+        .remove([rawFilePath]); // Используем то же имя файла для удаления
 
       if (deleteError) {
         console.error("Error deleting raw image:", deleteError.message);
