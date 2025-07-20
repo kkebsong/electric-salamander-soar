@@ -6,8 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { showSuccess, showError, showLoading, dismissToast } from "@/utils/toast";
 import { supabase } from "@/integrations/supabase/client";
-import { X, UploadCloud, Loader2, CheckCircle, XCircle } from "lucide-react"; // Import new icons
-import { cn } from "@/lib/utils"; // Import cn for conditional class names
+import { X, UploadCloud, Loader2, CheckCircle, XCircle } from "lucide-react";
+import { cn } from "@/lib/utils";
+import JSZip from "jszip"; // Import JSZip
+import { saveAs } from "file-saver"; // Import saveAs
 
 interface UploadFile {
   id: string;
@@ -19,13 +21,13 @@ interface UploadFile {
 }
 
 const ImageUploader = () => {
-  const [uploadFiles, setUploadFiles] = useState<UploadFile[]>([]); // Renamed from selectedFiles
+  const [uploadFiles, setUploadFiles] = useState<UploadFile[]>([]);
   const [processedImageUrls, setProcessedImageUrls] = useState<string[]>([]);
-  const [isUploadingGlobal, setIsUploadingGlobal] = useState(false); // Global state for disabling main button
+  const [isUploadingGlobal, setIsUploadingGlobal] = useState(false);
   const [cropAmount, setCropAmount] = useState<number>(45);
+  const [folderName, setFolderName] = useState<string>("processed_images"); // New state for folder name
   const [isDragging, setIsDragging] = useState(false);
 
-  // Effect to clean up object URLs when component unmounts or files change
   useEffect(() => {
     return () => {
       uploadFiles.forEach(uploadFile => URL.revokeObjectURL(uploadFile.previewUrl));
@@ -39,7 +41,7 @@ const ImageUploader = () => {
     Array.from(files).forEach(file => {
       if (file.type === 'image/png') {
         newUploadFiles.push({
-          id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`, // Unique ID
+          id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
           file: file,
           previewUrl: URL.createObjectURL(file),
           status: 'pending',
@@ -59,7 +61,7 @@ const ImageUploader = () => {
     }
 
     setUploadFiles(prevFiles => [...prevFiles, ...newUploadFiles]);
-    setProcessedImageUrls([]); // Clear processed images when new raw images are selected.
+    setProcessedImageUrls([]);
   }, []);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -96,6 +98,10 @@ const ImageUploader = () => {
     setCropAmount(isNaN(value) ? 0 : value);
   };
 
+  const handleFolderNameChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setFolderName(event.target.value);
+  };
+
   const handleRemoveFile = (idToRemove: string) => {
     const fileToRemove = uploadFiles.find(f => f.id === idToRemove);
     if (fileToRemove) {
@@ -126,7 +132,6 @@ const ImageUploader = () => {
       const fileName = `${Date.now()}-${uploadFile.file.name}`;
       const rawFilePath = fileName;
 
-      // Update status to uploading
       setUploadFiles(prev => prev.map(f => f.id === uploadFile.id ? { ...f, status: 'uploading' } : f));
 
       try {
@@ -141,7 +146,6 @@ const ImageUploader = () => {
           throw new Error(`Upload failed: ${uploadError.message}`);
         }
 
-        // Update status to processing
         setUploadFiles(prev => prev.map(f => f.id === uploadFile.id ? { ...f, status: 'processing' } : f));
 
         const edgeFunctionUrl = `https://jitmryvgkeuwmmzjcfwj.supabase.co/functions/v1/process-image`; 
@@ -190,8 +194,7 @@ const ImageUploader = () => {
     dismissToast(globalToastId);
     setIsUploadingGlobal(false);
     
-    // After all files are processed, clear the input list and show final toast
-    setUploadFiles([]); // Clear the input list
+    setUploadFiles([]);
     if (successfulProcessedUrls.length > 0) {
       showSuccess(`Successfully processed ${successfulProcessedUrls.length} out of ${totalFiles} images!`);
     } else {
@@ -205,8 +208,17 @@ const ImageUploader = () => {
       return;
     }
 
-    showSuccess(`Attempting to download ${processedImageUrls.length} images. Please allow pop-ups if prompted.`);
+    const downloadToastId = showLoading(`Preparing ${processedImageUrls.length} images for download...`);
+    const zip = new JSZip();
+    const folder = zip.folder(folderName || "processed_images"); // Use folderName or default
 
+    if (!folder) {
+      dismissToast(downloadToastId);
+      showError("Failed to create zip folder.");
+      return;
+    }
+
+    let downloadCount = 0;
     for (const url of processedImageUrls) {
       try {
         const response = await fetch(url);
@@ -214,20 +226,25 @@ const ImageUploader = () => {
           throw new Error(`Failed to fetch image: ${response.statusText}`);
         }
         const blob = await response.blob();
-        const blobUrl = URL.createObjectURL(blob);
-        
-        const link = document.createElement('a');
-        link.href = blobUrl;
-        link.download = url.split('/').pop() || `processed_image.jpeg`; // Use original filename or a generic one
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        
-        URL.revokeObjectURL(blobUrl); // Clean up the object URL
+        const filename = url.split('/').pop() || `processed_image_${Date.now()}.jpeg`;
+        folder.file(filename, blob);
+        downloadCount++;
+        showLoading(`Adding ${downloadCount}/${processedImageUrls.length} images to zip...`);
       } catch (error) {
-        console.error("Error downloading image:", error);
-        showError(`Failed to download an image: ${error instanceof Error ? error.message : String(error)}`);
+        console.error("Error adding image to zip:", error);
+        showError(`Failed to add an image to the zip: ${error instanceof Error ? error.message : String(error)}`);
       }
+    }
+
+    try {
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      saveAs(zipBlob, `${folderName || "processed_images"}.zip`);
+      dismissToast(downloadToastId);
+      showSuccess(`Successfully downloaded ${downloadCount} images as a ZIP file!`);
+    } catch (error) {
+      console.error("Error generating or saving zip:", error);
+      dismissToast(downloadToastId);
+      showError(`Failed to create or download the ZIP file: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
 
@@ -237,6 +254,7 @@ const ImageUploader = () => {
     setProcessedImageUrls([]);
     setIsUploadingGlobal(false);
     setCropAmount(45);
+    setFolderName("processed_images"); // Reset folder name
     showSuccess("All selections and processed images have been cleared.");
   };
 
@@ -287,6 +305,20 @@ const ImageUploader = () => {
             placeholder="e.g., 45"
           />
         </div>
+
+        <div className="grid w-full max-w-sm items-center gap-1.5">
+          <label htmlFor="folder-name" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+            Download Folder Name
+          </label>
+          <Input 
+            id="folder-name" 
+            type="text" 
+            value={folderName} 
+            onChange={handleFolderNameChange} 
+            placeholder="e.g., My Cropped Images"
+          />
+        </div>
+
         {uploadFiles.length > 0 && (
           <div className="text-sm text-muted-foreground">
             <p>Selected files ({uploadFiles.length}):</p>
@@ -302,7 +334,7 @@ const ImageUploader = () => {
                     size="icon" 
                     className="absolute top-1 right-1 h-6 w-6 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
                     onClick={() => handleRemoveFile(uploadFile.id)}
-                    disabled={isUploadingGlobal} // Disable remove during upload
+                    disabled={isUploadingGlobal}
                   >
                     <X className="h-4 w-4" />
                   </Button>
@@ -333,7 +365,7 @@ const ImageUploader = () => {
           </Button>
           {processedImageUrls.length > 0 && (
             <Button onClick={handleDownloadAll} disabled={isUploadingGlobal} className="flex-grow" variant="secondary">
-              Download All ({processedImageUrls.length})
+              Download All ({processedImageUrls.length}) as ZIP
             </Button>
           )}
         </div>
