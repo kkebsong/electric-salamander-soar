@@ -2,12 +2,13 @@
 
 import { MadeWithDyad } from "@/components/made-with-dyad";
 import ImageUploader from "@/components/ImageUploader";
+import InteractiveImageCropper from "@/components/InteractiveImageCropper";
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
 import { showError, showSuccess, showLoading, dismissToast } from "@/utils/toast";
-import { Download } from "lucide-react";
+import { Download, Crop } from "lucide-react";
 
 interface ProcessedImage {
   originalName: string;
@@ -17,6 +18,8 @@ interface ProcessedImage {
 
 const Index = () => {
   const [processedImages, setProcessedImages] = useState<ProcessedImage[]>([]);
+  const [isCropperOpen, setIsCropperOpen] = useState(false);
+  const [imageToCrop, setImageToCrop] = useState<ProcessedImage | null>(null);
 
   const handleImagesProcessed = (images: ProcessedImage[]) => {
     setProcessedImages(images);
@@ -60,6 +63,24 @@ const Index = () => {
     }
   };
 
+  const handleOpenCropper = (image: ProcessedImage) => {
+    setImageToCrop(image);
+    setIsCropperOpen(true);
+  };
+
+  const handleCloseCropper = () => {
+    setIsCropperOpen(false);
+    setImageToCrop(null);
+  };
+
+  const handleImageCropped = (croppedImageUrl: string, originalName: string, newPath: string) => {
+    // Add the newly cropped image to the list of processed images
+    setProcessedImages(prevImages => [
+      ...prevImages,
+      { originalName: originalName, processedUrl: croppedImageUrl, processedPath: newPath }
+    ]);
+  };
+
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gray-100 dark:bg-gray-900 p-4">
       <div className="text-center mb-8">
@@ -78,9 +99,17 @@ const Index = () => {
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               {processedImages.map((image, index) => (
-                <div key={index} className="flex flex-col items-center">
+                <div key={index} className="flex flex-col items-center p-2 border rounded-md shadow-sm bg-white dark:bg-gray-800">
                   <img src={image.processedUrl} alt={image.originalName} className="max-w-full h-auto rounded-md shadow-md" />
-                  <p className="text-sm text-center mt-2">{image.originalName.split('.')[0]}.jpeg</p>
+                  <p className="text-sm text-center mt-2 text-gray-800 dark:text-gray-200">{image.originalName.split('.')[0]}.jpeg</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-2"
+                    onClick={() => handleOpenCropper(image)}
+                  >
+                    <Crop className="mr-1 h-3 w-3" /> Crop
+                  </Button>
                 </div>
               ))}
             </div>
@@ -89,6 +118,17 @@ const Index = () => {
             </Button>
           </CardContent>
         </Card>
+      )}
+
+      {imageToCrop && (
+        <InteractiveImageCropper
+          isOpen={isCropperOpen}
+          onClose={handleCloseCropper}
+          imageUrl={imageToCrop.processedUrl}
+          imageOriginalName={imageToCrop.originalName}
+          imageProcessedPath={imageToCrop.processedPath}
+          onImageCropped={handleImageCropped}
+        />
       )}
 
       <MadeWithDyad />
