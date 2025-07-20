@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { showSuccess, showError, showLoading, dismissToast } from "@/utils/toast";
 import { supabase } from "@/integrations/supabase/client"; // Import Supabase client
+import { X } from "lucide-react"; // Import X icon for removing files
 
 const ImageUploader = () => {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -39,6 +40,18 @@ const ImageUploader = () => {
   const handleCropAmountChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const value = parseInt(event.target.value, 10);
     setCropAmount(isNaN(value) ? 0 : value); // Ensure it's a number, default to 0 if invalid
+  };
+
+  const handleRemoveFile = (indexToRemove: number) => {
+    const newSelectedFiles = selectedFiles.filter((_, index) => index !== indexToRemove);
+    const newPreviewUrls = previewUrls.filter((_, index) => index !== indexToRemove);
+    
+    // Revoke the object URL for the removed file to free up memory
+    URL.revokeObjectURL(previewUrls[indexToRemove]);
+
+    setSelectedFiles(newSelectedFiles);
+    setPreviewUrls(newPreviewUrls);
+    showSuccess(`Removed file: ${selectedFiles[indexToRemove]?.name}`);
   };
 
   const handleUpload = async () => {
@@ -152,7 +165,8 @@ const ImageUploader = () => {
 
   const handleReset = () => {
     setSelectedFiles([]);
-    setPreviewUrls([]); // Clear previews on reset
+    previewUrls.forEach(url => URL.revokeObjectURL(url)); // Revoke all preview URLs on reset
+    setPreviewUrls([]); 
     setProcessedImageUrls([]);
     setIsUploading(false);
     setCropAmount(45); // Reset crop amount to default
@@ -197,6 +211,14 @@ const ImageUploader = () => {
                   <span className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 text-white text-xs p-1 truncate rounded-b-md">
                     {selectedFiles[index]?.name}
                   </span>
+                  <Button 
+                    variant="destructive" 
+                    size="icon" 
+                    className="absolute top-1 right-1 h-6 w-6 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={() => handleRemoveFile(index)}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
                 </div>
               ))}
             </div>
