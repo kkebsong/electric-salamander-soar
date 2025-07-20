@@ -125,6 +125,13 @@ const ImageUploader = () => {
     });
   };
 
+  const handleReset = () => {
+    setSelectedFiles([]);
+    setProcessedImageUrls([]);
+    setIsUploading(false);
+    showSuccess("All selections and processed images have been cleared.");
+  };
+
   return (
     <Card className="w-full max-w-md mx-auto">
       <CardHeader>
@@ -160,6 +167,11 @@ const ImageUploader = () => {
             </Button>
           )}
         </div>
+        {(selectedFiles.length > 0 || processedImageUrls.length > 0) && (
+          <Button onClick={handleReset} variant="outline" className="w-full">
+            Reset
+          </Button>
+        )}
         {processedImageUrls.length > 0 && (
           <div className="mt-4">
             <p className="text-sm font-medium mb-2">Processed Images:</p>
