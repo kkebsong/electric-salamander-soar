@@ -48,7 +48,7 @@ const ImageUploader = () => {
     }
 
     setIsUploading(true);
-    const overallToastId = showLoading("Starting image upload and processing...");
+    const overallToastId = showLoading("Starting image upload and processing...") as string;
     const tempProcessedImageUrls: string[] = []; // Use a temporary array to collect URLs
 
     for (const file of selectedFiles) {
@@ -97,7 +97,7 @@ const ImageUploader = () => {
       showSuccess(`Successfully processed ${tempProcessedImageUrls.length} image(s)!`);
       
       // Now, create and download the ZIP
-      const zipToastId = showLoading("Creating ZIP archive for download...");
+      const zipToastId = showLoading("Creating ZIP archive for download...") as string;
       try {
         const { data: zipResult, error: zipError } = await supabase.functions.invoke('create-zip', {
           body: { imagePaths: tempProcessedImageUrls.map(url => url.split('/public/images/')[1]), folderName: downloadFolderName }, // Pass only the path part
