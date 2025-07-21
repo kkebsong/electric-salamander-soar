@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
-import { Image } from "https://deno.land/x/deno_image/mod.ts"; // Changed this line
+import { Image } from "https://deno.land/x/deno_image/mod.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -13,10 +13,10 @@ serve(async (req) => {
   }
 
   try {
-    const { filePath, fileName } = await req.json();
+    const { filePath, fileName, cropAmount } = await req.json();
 
-    if (!filePath || !fileName) {
-      return new Response(JSON.stringify({ error: 'Missing filePath or fileName' }), {
+    if (!filePath || !fileName || typeof cropAmount !== 'number') {
+      return new Response(JSON.stringify({ error: 'Missing filePath, fileName, or cropAmount' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 400,
       });
@@ -52,12 +52,12 @@ serve(async (req) => {
     const imageBuffer = await imageData.arrayBuffer();
     const image = new Image(new Uint8Array(imageBuffer));
 
-    // Crop 45 pixels from the bottom
+    // Crop 'cropAmount' pixels from the bottom
     const originalHeight = image.height;
-    const newHeight = originalHeight - 45;
+    const newHeight = originalHeight - cropAmount;
 
     if (newHeight <= 0) {
-      throw new Error('Image is too short to crop 45 pixels from the bottom.');
+      throw new Error(`Image is too short to crop ${cropAmount} pixels from the bottom.`);
     }
 
     const croppedImage = image.crop(0, 0, image.width, newHeight);
@@ -66,7 +66,8 @@ serve(async (req) => {
     const jpegBuffer = croppedImage.encode(Image.Format.Jpeg);
 
     // Upload the processed JPEG image to Supabase Storage
-    const processedFilePath = `processed/${fileName.split('.')[0]}.jpeg`;
+    const processedFileName = `${fileName.split('.')[0]}.jpeg`;
+    const processedFilePath = `processed/${processedFileName}`;
     const { data: uploadData, error: uploadError } = await supabase.storage
       .from('images')
       .upload(processedFilePath, jpegBuffer, {
@@ -79,7 +80,7 @@ serve(async (req) => {
       throw uploadError;
     }
 
-    // Get the public URL of the uploaded image
+    // Get the public URL of the uploaded image (though not used in new UI, good for debugging)
     const { data: publicUrlData } = supabase.storage
       .from('images')
       .getPublicUrl(processedFilePath);

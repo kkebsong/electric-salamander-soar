@@ -13,7 +13,7 @@ serve(async (req) => {
   }
 
   try {
-    const { imagePaths } = await req.json();
+    const { imagePaths, folderName } = await req.json();
 
     if (!Array.isArray(imagePaths) || imagePaths.length === 0) {
       return new Response(JSON.stringify({ error: 'No image paths provided' }), {
@@ -56,7 +56,7 @@ serve(async (req) => {
     const zipBuffer = await zipWriter.generate(true); // Generate ZIP as Uint8Array
 
     // Upload the ZIP file to Supabase Storage
-    const zipFileName = `archives/processed_images_${Date.now()}.zip`;
+    const zipFileName = `archives/${folderName || 'processed_images'}_${Date.now()}.zip`;
     const { data: uploadData, error: uploadError } = await supabase.storage
       .from('images')
       .upload(zipFileName, zipBuffer, {
