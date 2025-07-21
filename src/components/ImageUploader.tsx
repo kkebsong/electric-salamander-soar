@@ -13,10 +13,12 @@ const ImageUploader = () => {
   const [cropAmount, setCropAmount] = useState<number>(45); // Default from screenshot
   const [downloadFolderName, setDownloadFolderName] = useState<string>("processed_images"); // Default from screenshot
   const [isUploading, setIsUploading] = useState(false);
+  const [processedImageUrls, setProcessedImageUrls] = useState<string[]>([]); // New state for preview URLs
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files) {
       setSelectedFiles(Array.from(event.target.files));
+      setProcessedImageUrls([]); // Clear previous previews
     } else {
       setSelectedFiles([]);
     }
@@ -34,6 +36,7 @@ const ImageUploader = () => {
     if (event.dataTransfer.files && event.dataTransfer.files.length > 0) {
       const files = Array.from(event.dataTransfer.files).filter(file => file.type === "image/png");
       setSelectedFiles(files);
+      setProcessedImageUrls([]); // Clear previous previews
       event.dataTransfer.clearData();
     }
   }, []);
@@ -46,7 +49,7 @@ const ImageUploader = () => {
 
     setIsUploading(true);
     const overallToastId = showLoading("Starting image upload and processing...");
-    const processedImagePaths: string[] = [];
+    const tempProcessedImageUrls: string[] = []; // Use a temporary array to collect URLs
 
     for (const file of selectedFiles) {
       try {
@@ -73,10 +76,10 @@ const ImageUploader = () => {
           throw processError;
         }
 
-        if (processResult && processResult.processedFilePath) {
-          processedImagePaths.push(processResult.processedFilePath);
+        if (processResult && processResult.publicUrl) { // Use publicUrl for preview
+          tempProcessedImageUrls.push(processResult.publicUrl);
         } else {
-          throw new Error("Processing failed: No processed file path returned.");
+          throw new Error("Processing failed: No public URL returned.");
         }
 
       } catch (error: any) {
@@ -88,15 +91,16 @@ const ImageUploader = () => {
     dismissToast(overallToastId);
     setIsUploading(false);
     setSelectedFiles([]); // Clear selected files after processing attempt
+    setProcessedImageUrls(tempProcessedImageUrls); // Set the collected URLs for preview
 
-    if (processedImagePaths.length > 0) {
-      showSuccess(`Successfully processed ${processedImagePaths.length} image(s)!`);
+    if (tempProcessedImageUrls.length > 0) {
+      showSuccess(`Successfully processed ${tempProcessedImageUrls.length} image(s)!`);
       
       // Now, create and download the ZIP
       const zipToastId = showLoading("Creating ZIP archive for download...");
       try {
         const { data: zipResult, error: zipError } = await supabase.functions.invoke('create-zip', {
-          body: { imagePaths: processedImagePaths, folderName: downloadFolderName },
+          body: { imagePaths: tempProcessedImageUrls.map(url => url.split('/public/images/')[1]), folderName: downloadFolderName }, // Pass only the path part
           headers: { 'Content-Type': 'application/json' },
         });
 
@@ -193,6 +197,23 @@ const ImageUploader = () => {
         <p className="text-xs text-gray-500 mt-4">
           Note: Actual image cropping and format conversion happen on the Supabase Edge Function.
         </p>
+
+        {processedImageUrls.length > 0 && (
+          <div className="space-y-4 mt-6">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Processed Image Previews:</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+              {processedImageUrls.map((url, index) => (
+                <div key={index} className="relative w-full h-24 overflow-hidden rounded-md border border-gray-200 dark:border-gray-700">
+                  <img
+                    src={url}
+                    alt={`Processed image ${index + 1}`}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
