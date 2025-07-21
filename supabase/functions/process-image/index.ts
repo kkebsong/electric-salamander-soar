@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
-import { Image } from "https://deno.land/x/deno_image/mod.ts";
+import * as DenoImage from "https://deno.land/x/deno_image/mod.ts"; // Изменено здесь
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -54,7 +54,7 @@ serve(async (req) => {
     }
 
     const imageBuffer = await imageData.arrayBuffer();
-    const image = new Image(new Uint8Array(imageBuffer));
+    const image = new DenoImage.Image(new Uint8Array(imageBuffer)); // Изменено здесь
 
     // Crop 'cropAmount' pixels from the bottom
     const originalHeight = image.height;
@@ -67,7 +67,7 @@ serve(async (req) => {
     const croppedImage = image.crop(0, 0, image.width, newHeight);
 
     // Convert to JPEG
-    const jpegBuffer = croppedImage.encode(Image.Format.Jpeg);
+    const jpegBuffer = croppedImage.encode(DenoImage.Image.Format.Jpeg); // Изменено здесь
 
     // Upload the processed JPEG image to Supabase Storage
     const processedFileName = `${fileName.split('.')[0]}.jpeg`;
