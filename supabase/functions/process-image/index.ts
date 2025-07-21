@@ -25,6 +25,10 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const supabaseServiceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
+    // Логирование для отладки
+    console.log('Edge Function (process-image): SUPABASE_URL:', supabaseUrl ? 'set' : 'not set');
+    console.log('Edge Function (process-image): SUPABASE_SERVICE_ROLE_KEY:', supabaseServiceRoleKey ? 'set' : 'not set');
+
     if (!supabaseUrl || !supabaseServiceRoleKey) {
       throw new Error('Supabase URL or Service Role Key not set in environment variables.');
     }
